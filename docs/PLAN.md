@@ -2,11 +2,15 @@
 
 ## Scope
 
-- Input: scanned or photographed **a cappella** sheets (image or PDF, multi-page).
+- Input: **a cappella** sheets, both clean PDFs exported from notation software
+  and scanned or photographed pages (image or PDF, multi-page).
   Voices may each have their own staff, or share a staff (e.g. S+A on one staff,
   stems up/down). Printed music only; handwriting is out of scope.
-- Output: MusicXML and an engraved PDF. Lyrics in Hebrew and/or English,
-  **without niqqud** (vowel points are stripped).
+  Percussion staves and chord symbols are ignored.
+- Output: MusicXML and an engraved PDF. Lyrics in English (Latin script) first,
+  Hebrew script later, **without niqqud** (vowel points are stripped).
+
+Phase 0 is done; see [phase0-findings.md](phase0-findings.md).
 - Users fix recognition errors **in the browser**, without installing anything.
   Version 1 focuses on lyrics correction; note correction is a later phase.
 - Free for users, built only on free/open-source software. The code is public
