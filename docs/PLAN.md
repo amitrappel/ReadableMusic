@@ -18,6 +18,7 @@
 
 - Phase 0 is done; see [phase0-findings.md](phase0-findings.md).
 - Phase 1 (CLI pipeline) is working; see [phase1-progress.md](phase1-progress.md).
+- Phase 2 (web MVP) is working locally; see [phase2-progress.md](phase2-progress.md).
 
 ## Working rule
 

@@ -1,6 +1,7 @@
 """Engrave MusicXML to PDF with Verovio (SVG pages) and svglib/reportlab (vector PDF)."""
 
 import io
+from importlib.resources import files
 from pathlib import Path
 
 import verovio
@@ -12,6 +13,7 @@ A4_MM = (210, 297)
 POINTS_PER_MM = 72 / 25.4
 VEROVIO_STAFF_MM = 7.2  # staff height at Verovio's default unit and 100% scale
 SVGLIB_CONTENT_RATIO = 0.75
+RESOURCES = str(files("verovio") / "data")  # Verovio sets its default only in the importing thread
 
 
 def to_pdf(musicxml: Path, dest: Path, staff_mm: float = 5.0) -> int:
@@ -21,7 +23,8 @@ def to_pdf(musicxml: Path, dest: Path, staff_mm: float = 5.0) -> int:
     page is then shrunk onto A4, which gives the requested staff height.
     """
     enlarge = VEROVIO_STAFF_MM / staff_mm
-    tk = verovio.toolkit()
+    tk = verovio.toolkit(False)
+    tk.setResourcePath(RESOURCES)
     tk.setOptions({
         "pageWidth": round(A4_MM[0] * 10 * enlarge),  # Verovio units are tenths of a millimetre
         "pageHeight": round(A4_MM[1] * 10 * enlarge),

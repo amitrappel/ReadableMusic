@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReadableMusic</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<header class="bar">
+  <a href="/" class="home">ReadableMusic</a>
+  <span id="status">Loading…</span>
+  <span class="spacer"></span>
+  <span id="tools" hidden>
+    <button id="text-view" type="button">Edit a line as text</button>
+    <button id="save" type="button" disabled>Save changes</button>
+    <a id="get-xml" class="button" download>MusicXML</a>
+    <a id="get-pdf" class="button" download>PDF</a>
+  </span>
+</header>
+
+<p id="help" class="narrow" hidden>Click a note or syllable to edit its lyric.
+  <kbd>Tab</kbd> moves to the next note, <kbd>Enter</kbd> closes, <kbd>Esc</kbd> cancels.
+  End a syllable with <kbd>-</kbd> when the word continues on the next note.</p>
+
+<div id="score"></div>
+
+<div id="popup" class="popup" hidden></div>
+
+<aside id="panel" class="panel" hidden>
+  <h2>Edit a line as text</h2>
+  <label>Part <select id="panel-part"></select></label>
+  <label>Verse <select id="panel-verse"></select></label>
+  <textarea id="panel-text" dir="auto" rows="12" spellcheck="true"></textarea>
+  <p id="panel-count" class="small"></p>
+  <p class="small">Words are separated by spaces, syllables by <kbd>-</kbd>. The number of
+    syllables must match the number of notes that already have a lyric; to add a
+    missing one, click its note in the score.</p>
+  <button id="panel-apply" type="button">Apply</button>
+  <button id="panel-close" type="button">Close</button>
+</aside>
+
+<script src="https://cdn.jsdelivr.net/npm/verovio@6.3.0/dist/verovio-toolkit-wasm.js"></script>
+<script src="/static/editor.js"></script>
+</body>
+</html>

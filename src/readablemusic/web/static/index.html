@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReadableMusic</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+<main class="narrow">
+  <h1>ReadableMusic</h1>
+  <p>Turn a scan or PDF of a cappella sheet music into a clean <b>MusicXML</b> file and
+    <b>PDF</b>. You can fix the lyrics in your browser before downloading.</p>
+  <form method="post" action="/jobs" enctype="multipart/form-data" id="upload">
+    <label class="drop">
+      <input type="file" name="files" multiple required
+             accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp,application/pdf,image/*">
+      <span>Choose a PDF, or page images in page order</span>
+    </label>
+    <button type="submit">Convert</button>
+  </form>
+  <ul class="hints">
+    <li>Printed music only. Lyrics in English for now.</li>
+    <li>Scan straight, at 300 DPI if you can. Phone photos work best flat and evenly lit.</li>
+    <li>Processing takes about a minute per page. Results are deleted after 24 hours.</li>
+  </ul>
+  <p class="small">Free and open source (AGPL-3.0):
+    <a href="https://github.com/amitrappel/ReadableMusic">source code</a>.
+    Recognition by <a href="https://github.com/Audiveris/audiveris">Audiveris</a>,
+    engraving by <a href="https://www.verovio.org">Verovio</a>.</p>
+</main>
+<script>
+  document.getElementById("upload").addEventListener("submit", e => {
+    const button = e.target.querySelector("button");
+    button.disabled = true;
+    button.textContent = "Uploading…";
+  });
+</script>
+</body>
+</html>
