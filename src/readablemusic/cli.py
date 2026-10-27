@@ -8,6 +8,7 @@ import music21 as m21
 
 from . import audiveris
 from .engrave import to_pdf
+from .lyrics import clean_lyrics
 from .pages import load_pages, save_tiff
 from .parts import merge_parts
 
@@ -26,7 +27,7 @@ def main() -> None:
     work.mkdir(parents=True, exist_ok=True)
     book = save_tiff(pages, work / f"{args.inputs[0].stem}.tif")
     for mxl in audiveris.transcribe(book, work):
-        score = merge_parts(m21.converter.parse(mxl))
+        score = clean_lyrics(merge_parts(m21.converter.parse(mxl)))
         dest = args.out / mxl.with_suffix(".musicxml").name
         score.write("musicxml", dest)
         print(f"Wrote {dest} ({len(score.parts)} parts)")

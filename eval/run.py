@@ -11,6 +11,7 @@ from pathlib import Path
 import music21 as m21
 
 from readablemusic import audiveris
+from readablemusic.lyrics import clean_lyrics
 from readablemusic.pages import load_pages, save_tiff
 from readablemusic.parts import merge_parts
 from score import compare
@@ -27,7 +28,7 @@ def run_one(piece: Path, variant: str) -> Path:
     book = save_tiff(load_pages(pages), work / f"{piece.name}.tif")
     mxl = audiveris.transcribe(book, work)[0]
     dest = RESULTS / variant / f"{piece.name}.musicxml"
-    merge_parts(m21.converter.parse(mxl)).write("musicxml", dest)
+    clean_lyrics(merge_parts(m21.converter.parse(mxl))).write("musicxml", dest)
     return dest
 
 

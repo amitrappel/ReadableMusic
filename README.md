@@ -13,7 +13,9 @@ The project is managed with [uv](https://docs.astral.sh/uv/).
 
 ```
 uv sync
-uv run readablemusic
+uv run python scripts/fetch_tools.py      # Windows: Audiveris + OCR data into tools/
+uv run readablemusic score.pdf -o out/    # writes out/score.musicxml and out/score.pdf
+uv run pytest
 ```
 
 ## License
