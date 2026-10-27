@@ -9,13 +9,15 @@
   Percussion staves and chord symbols are ignored.
 - Output: MusicXML and an engraved PDF. Lyrics in English (Latin script) first,
   Hebrew script later, **without niqqud** (vowel points are stripped).
-
-Phase 0 is done; see [phase0-findings.md](phase0-findings.md).
-Phase 1 (CLI pipeline) is working; see [phase1-progress.md](phase1-progress.md).
 - Users fix recognition errors **in the browser**, without installing anything.
   Version 1 focuses on lyrics correction; note correction is a later phase.
 - Free for users, built only on free/open-source software. The code is public
   under AGPL-3.0 (required by Audiveris).
+
+## Status
+
+- Phase 0 is done; see [phase0-findings.md](phase0-findings.md).
+- Phase 1 (CLI pipeline) is working; see [phase1-progress.md](phase1-progress.md).
 
 ## Working rule
 
