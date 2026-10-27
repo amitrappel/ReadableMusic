@@ -16,3 +16,10 @@ samples/*
 # Pipeline outputs and job data
 out/
 work/
+
+# Local third-party tools (Audiveris, OCR data), see scripts/fetch_tools.py
+tools/
+
+# Generated evaluation data
+eval/data/
+eval/results/
