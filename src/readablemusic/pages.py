@@ -6,22 +6,12 @@ from pathlib import Path
 import pypdfium2 as pdfium
 from PIL import Image
 
-from .scale import TARGET_INTERLINE, estimate_interline
+from .scale import TARGET_INTERLINE, estimate_interline, staff_evidence
 
 PROBE_DPI = 200
 MIN_DPI, MAX_DPI = 150, 800
 MIN_SCALE, MAX_SCALE = 0.5, 3.0
-
-
-def load_pages(inputs: list[Path]) -> list[Image.Image]:
-    """Load all pages of all inputs, in order, as grayscale images with the target interline."""
-    pages: list[Image.Image] = []
-    for path in inputs:
-        if path.suffix.lower() == ".pdf":
-            pages.extend(_load_pdf(path))
-        else:
-            pages.extend(_load_image(path))
-    return pages
+MAX_PIXELS = 19_000_000  # Audiveris rejects pages above 20 megapixels
 
 
 def _load_pdf(path: Path) -> list[Image.Image]:
@@ -44,17 +34,39 @@ def _pdf_dpi(pdf: pdfium.PdfDocument) -> int:
     return round(min(max(dpi, MIN_DPI), MAX_DPI))
 
 
+def load_pages(inputs: list[Path]) -> list[Image.Image]:
+    """Load all pages of all inputs, in order, as grayscale images with the target interline."""
+    pages: list[Image.Image] = []
+    images: list[Image.Image] = []
+    for path in inputs:
+        if path.suffix.lower() == ".pdf":
+            pages.extend(_load_pdf(path))
+        else:
+            loaded = _load_image(path)
+            images.extend(loaded)
+            pages.extend(loaded)
+    if images:
+        # One scale for all scanned pages, from the page with the most staff evidence:
+        # a mostly empty page gives an unreliable estimate.
+        interline, support = max(map(staff_evidence, images), key=lambda e: e[1])
+        k = min(max(TARGET_INTERLINE / interline, MIN_SCALE), MAX_SCALE) if support else 1.0
+        scaled = {id(img): _resize(img, k) for img in images}
+        pages = [scaled.get(id(p), p) for p in pages]
+    return [_resize(p, min(1.0, (MAX_PIXELS / (p.width * p.height)) ** 0.5)) for p in pages]
+
+
+def _resize(img: Image.Image, k: float) -> Image.Image:
+    if abs(k - 1) < 0.01:
+        return img
+    return img.resize((round(img.width * k), round(img.height * k)), Image.LANCZOS)
+
+
 def _load_image(path: Path) -> list[Image.Image]:
     pages = []
     with Image.open(path) as img:
         for frame in range(getattr(img, "n_frames", 1)):
             img.seek(frame)
-            page = img.convert("L")
-            interline = estimate_interline(page)
-            if interline is not None:
-                k = min(max(TARGET_INTERLINE / interline, MIN_SCALE), MAX_SCALE)
-                page = page.resize((round(page.width * k), round(page.height * k)), Image.LANCZOS)
-            pages.append(page)
+            pages.append(img.convert("L"))
     return pages
 
 

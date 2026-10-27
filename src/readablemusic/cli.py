@@ -7,6 +7,7 @@ from pathlib import Path
 import music21 as m21
 
 from . import audiveris
+from .engrave import to_pdf
 from .pages import load_pages, save_tiff
 from .parts import merge_parts
 
@@ -29,4 +30,6 @@ def main() -> None:
         dest = args.out / mxl.with_suffix(".musicxml").name
         score.write("musicxml", dest)
         print(f"Wrote {dest} ({len(score.parts)} parts)")
+        pdf = dest.with_suffix(".pdf")
+        print(f"Wrote {pdf} ({to_pdf(dest, pdf)} pages)")
     print(f"Done in {time.monotonic() - start:.0f}s")

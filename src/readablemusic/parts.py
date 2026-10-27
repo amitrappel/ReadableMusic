@@ -144,15 +144,23 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
             continue
         part = m21.stream.Part()
         part.partName = voice.name
+        current: dict[type, str] = {}
         for s, (a, b) in enumerate(bounds):
             k = sources[s]
             for idx in range(a, b):
-                part.append(_measure_for(measures, k, idx, first=(idx == a)))
+                part.append(_measure_for(measures, k, idx, first=(idx == a), current=current))
         out.append(part)
     return out
 
 
-def _measure_for(measures, k: int | None, idx: int, first: bool) -> m21.stream.Measure:
+def _signature(el) -> str:
+    if isinstance(el, m21.clef.Clef):
+        return f"{el.sign}{el.line}{el.octaveChange}"
+    return str(el.sharps)
+
+
+def _measure_for(measures, k: int | None, idx: int, first: bool, current: dict) -> m21.stream.Measure:
+    """Copy measure idx of source part k. `current` tracks the clef and key in effect."""
     if k is None:
         # Voice not shown in this system: a full-measure rest, timed like the top staff.
         ref = measures[0][idx]
@@ -161,12 +169,21 @@ def _measure_for(measures, k: int | None, idx: int, first: bool) -> m21.stream.M
         rest.fullMeasure = True
         m.append(rest)
         return m
-    m = copy.deepcopy(measures[k][idx])
-    m.removeByClass(m21.layout.StaffLayout)
-    if first:
-        # Restate clef and key, since the previous measure may come from another source part.
-        src = measures[k][idx]
-        for cls in (m21.clef.Clef, m21.key.KeySignature):
-            if not m.getElementsByClass(cls) and (ctx := src.getContextByClass(cls)) is not None:
-                m.insert(0, copy.deepcopy(ctx))
+    src = measures[k][idx]
+    m = copy.deepcopy(src)
+    # Layout comes from the engraver, not from the scan.
+    m.removeByClass((m21.layout.StaffLayout, m21.layout.SystemLayout, m21.layout.PageLayout))
+    for cls in (m21.clef.Clef, m21.key.KeySignature):
+        own = [el for el in m.getElementsByClass(cls) if el.offset == 0]
+        if own:
+            el = own[0]
+        elif first and (el := src.getContextByClass(cls)) is not None:
+            # The previous measure may come from another source part: state it if it differs.
+            el = copy.deepcopy(el)
+            m.insert(0, el)
+        else:
+            continue
+        if current.get(cls) == _signature(el):
+            m.remove(el)  # unchanged: printing it again would look like a change
+        current[cls] = _signature(el)
     return m

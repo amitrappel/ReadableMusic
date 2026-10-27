@@ -8,8 +8,9 @@ Usage: uv run python eval/score.py TRUTH.musicxml RESULT.mxl
 """
 
 import difflib
+import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 
 import music21 as m21
@@ -39,8 +40,24 @@ def _notes(part: m21.stream.Part) -> Counter:
     return found
 
 
-def _lyrics(part: m21.stream.Part) -> list[str]:
-    return [n.lyric.strip().lower() for n in part.recurse().notes if n.lyric]
+def _lyrics(part: m21.stream.Part) -> dict[int, str]:
+    """Lyric text per verse number, verse labels like '1.' removed."""
+    verses: dict[int, list[str]] = defaultdict(list)
+    for n in part.recurse().notes:
+        for lyr in n.lyrics:
+            text = re.sub(r"^\d+\.\s*", "", (lyr.text or "").strip()).lower()
+            if text:
+                verses[lyr.number or 1].append(text)
+    # Renumber verses 1, 2, ... in order: some sources number a single verse '2'.
+    return {rank: " ".join(verses[k]) for rank, k in enumerate(sorted(verses), start=1)}
+
+
+def _lyric_similarity(truth: dict[int, str], found: dict[int, str]) -> float:
+    """Character similarity per verse, weighted by verse length."""
+    total = sum(len(t) for t in truth.values())
+    score = sum(len(t) * difflib.SequenceMatcher(None, t, found.get(k, ""), autojunk=False).ratio()
+                for k, t in truth.items())
+    return score / total
 
 
 def compare(truth_path: str, result_path: str) -> Result:
@@ -54,7 +71,7 @@ def compare(truth_path: str, result_path: str) -> Result:
         n_found += sum(rn.values())
         tl, rl = _lyrics(t), _lyrics(r)
         if tl:
-            lyric_scores.append(difflib.SequenceMatcher(None, " ".join(tl), " ".join(rl)).ratio())
+            lyric_scores.append(_lyric_similarity(tl, rl))
     for t in truth.parts[len(result.parts):]:
         n_truth += sum(_notes(t).values())
         if _lyrics(t):

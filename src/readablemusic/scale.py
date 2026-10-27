@@ -8,11 +8,17 @@ TARGET_INTERLINE = 24
 
 
 def estimate_interline(img: Image.Image, columns: int = 300) -> float | None:
-    """Return the most common distance in pixels between staff lines, or None if no staves.
+    """Return the most common distance in pixels between staff lines, or None if no staves."""
+    return staff_evidence(img, columns)[0]
+
+
+def staff_evidence(img: Image.Image, columns: int = 300) -> tuple[float | None, int]:
+    """Return (interline, support): support counts the staff-like samples behind the estimate.
 
     Scans a sample of pixel columns. In each column, a black run followed by a white
     run spans one line plus one gap, so the most frequent black+white length is the
-    interline. This is the classic OMR scale estimation.
+    interline. This is the classic OMR scale estimation. To ignore scan noise, a
+    period only counts when it repeats over four consecutive gaps, as in a staff.
     """
     a = np.asarray(img.convert("L"))
     black = a < _otsu(a)
@@ -22,16 +28,19 @@ def estimate_interline(img: Image.Image, columns: int = 300) -> float | None:
         col = black[:, x].astype(np.int8)
         edges = np.flatnonzero(np.diff(col)) + 1
         starts = edges[col[edges] == 1]  # white -> black transitions
-        if len(starts) < 2:
+        if len(starts) < 5:
             continue
-        np.add.at(counts, np.diff(starts), 1)
+        d = np.diff(starts)
+        window = np.lib.stride_tricks.sliding_window_view(d, 4)
+        staff_like = window.max(axis=1) <= window.min(axis=1) * 1.15
+        np.add.at(counts, window[staff_like, 0], 1)
     counts[:4] = 0  # ignore noise-sized periods
     if counts.sum() == 0:
-        return None
+        return None, 0
     peak = int(counts.argmax())
     # Refine with a weighted mean around the peak, since true spacing is fractional.
     lo, hi = max(peak - 1, 0), peak + 2
-    return float(np.average(np.arange(lo, hi), weights=counts[lo:hi]))
+    return float(np.average(np.arange(lo, hi), weights=counts[lo:hi])), int(counts[lo:hi].sum())
 
 
 def _otsu(a: np.ndarray) -> int:
