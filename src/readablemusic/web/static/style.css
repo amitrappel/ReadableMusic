@@ -53,7 +53,11 @@ button:disabled { opacity: 0.5; cursor: default; }
   background: var(--paper); border: 1px solid var(--accent); border-radius: 6px;
   padding: 0.4rem; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15); font-size: 0.85rem;
 }
+.popup[hidden] { display: none; }
 .popup input { font: inherit; font-size: 1rem; width: 9rem; padding: 0.2rem 0.3rem; }
+.popup-buttons { display: flex; gap: 0.3rem; }
+.popup-buttons button { padding: 0.15rem 0.6rem; font-size: 0.85rem; }
+.popup-buttons button:first-child { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .panel {
   position: fixed; z-index: 4; right: 16px; bottom: 16px; width: min(26rem, calc(100vw - 32px));

@@ -129,6 +129,14 @@ function openPopup(i, focusVerse) {
     label.append(input);
     popup.append(label);
   }
+  const buttons = document.createElement("div");
+  buttons.className = "popup-buttons";
+  const done = Object.assign(document.createElement("button"), { type: "button", textContent: "Done" });
+  const cancel = Object.assign(document.createElement("button"), { type: "button", textContent: "Cancel" });
+  done.addEventListener("click", () => closePopup(true));
+  cancel.addEventListener("click", () => closePopup(false));
+  buttons.append(done, cancel);
+  popup.append(buttons);
   current = { i, before: verses.map(v => shown(lyricOf(note, v))) };
   document.querySelectorAll("#score .current").forEach(e => e.classList.remove("current"));
   g.classList.add("current");
@@ -309,6 +317,10 @@ async function loadEditor() {
 
   $("score").addEventListener("click", onScoreClick);
   $("popup").addEventListener("keydown", onPopupKey);
+  // A click outside the popup and the score (score clicks are handled above) closes it.
+  document.addEventListener("click", e => {
+    if (!$("popup").contains(e.target) && !$("score").contains(e.target)) closePopup(true);
+  });
   $("save").addEventListener("click", save);
   $("text-view").addEventListener("click", openPanel);
   $("panel-part").addEventListener("change", fillPanelText);
