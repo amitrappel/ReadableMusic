@@ -21,7 +21,7 @@ def staff_evidence(img: Image.Image, columns: int = 300) -> tuple[float | None, 
     period only counts when it repeats over four consecutive gaps, as in a staff.
     """
     a = np.asarray(img.convert("L"))
-    black = a < _otsu(a)
+    black = a <= _otsu(a)  # Otsu puts levels up to and including t in the dark class
     h, w = black.shape
     counts = np.zeros(h + 1, dtype=np.int64)
     for x in np.linspace(0, w - 1, min(columns, w)).astype(int):

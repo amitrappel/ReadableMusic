@@ -1,12 +1,14 @@
 """Engrave MusicXML to PDF with Verovio (SVG pages) and svglib/reportlab (vector PDF)."""
 
 import io
+import re
 from importlib.resources import files
 from pathlib import Path
 
 import verovio
 from reportlab.graphics import renderPDF
 from reportlab.pdfgen import canvas
+from svglib.fonts import register_font
 from svglib.svglib import svg2rlg
 
 A4_MM = (210, 297)
@@ -14,6 +16,29 @@ POINTS_PER_MM = 72 / 25.4
 VEROVIO_STAFF_MM = 7.2  # staff height at Verovio's default unit and 100% scale
 SVGLIB_CONTENT_RATIO = 0.75
 RESOURCES = str(files("verovio") / "data")  # Verovio sets its default only in the importing thread
+FONTS = files("readablemusic") / "fonts"
+HEBREW_TEXT = re.compile(r">([^<>]*[֐-׿][^<>]*)<")
+
+TEXT_FONT = "DavidLibre"  # has both Latin and Hebrew letters
+
+for _weight, _file in (("normal", "DavidLibre-Regular.ttf"), ("bold", "DavidLibre-Bold.ttf")):
+    for _style in ("normal", "italic"):
+        register_font(TEXT_FONT, str(FONTS / _file), _weight, _style, rlgFontName=_file[:-4])
+
+
+def _for_reportlab(svg: str) -> str:
+    """Adapt Verovio's SVG text to reportlab.
+
+    Verovio asks for Times, which svglib always maps to the built-in Latin-only font, so
+    the family is renamed. Purely Hebrew text is reversed, since reportlab draws all text
+    left to right; that is enough for lyric syllables, and text mixing Hebrew with Latin
+    letters or digits is left as it is.
+    """
+    def flip(m: re.Match) -> str:
+        text = m.group(1)
+        return m.group(0) if re.search(r"[A-Za-z0-9]", text) else f">{text[::-1]}<"
+    svg = svg.replace('font-family="Times, serif"', f'font-family="{TEXT_FONT}"')
+    return HEBREW_TEXT.sub(flip, svg)
 
 
 def to_pdf(musicxml: Path, dest: Path, staff_mm: float = 5.0) -> int:
@@ -32,13 +57,14 @@ def to_pdf(musicxml: Path, dest: Path, staff_mm: float = 5.0) -> int:
         "header": "none",  # the Windows build garbles the en-dashes of its page-number header
         "footer": "none",
     })
-    if not tk.loadFile(str(musicxml)):
+    # loadData, not loadFile: Verovio cannot open non-ASCII paths on Windows
+    if not tk.loadData(musicxml.read_text(encoding="utf-8")):
         raise ValueError(f"Verovio could not read {musicxml}")
     width, height = A4_MM[0] * POINTS_PER_MM, A4_MM[1] * POINTS_PER_MM
     pdf = canvas.Canvas(str(dest), pagesize=(width, height))
     pages = tk.getPageCount()
     for n in range(1, pages + 1):
-        drawing = svg2rlg(io.StringIO(tk.renderToSVG(n)))
+        drawing = svg2rlg(io.StringIO(_for_reportlab(tk.renderToSVG(n))))
         # svglib converts px to pt on both Verovio's outer <svg> and its inner viewBox,
         # so the music fills only the top-left 75% of the drawing.
         k = width / (drawing.width * SVGLIB_CONTENT_RATIO)

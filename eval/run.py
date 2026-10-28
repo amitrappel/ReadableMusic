@@ -8,12 +8,8 @@ import sys
 import time
 from pathlib import Path
 
-import music21 as m21
-
 from readablemusic import audiveris
-from readablemusic.lyrics import clean_lyrics
-from readablemusic.pages import load_pages, save_tiff
-from readablemusic.parts import merge_parts
+from readablemusic.pipeline import transcribe
 from score import compare
 
 DATA = Path(__file__).parent / "data"
@@ -23,13 +19,7 @@ TRUTH = {"satb": "truth-satb.musicxml", "shared": "truth-shared.musicxml", "bad"
 
 def run_one(piece: Path, variant: str) -> Path:
     pages = sorted((piece / variant).glob("page-*"), key=lambda p: int(p.stem.split("-")[1]))
-    work = RESULTS / variant / "work" / piece.name
-    work.mkdir(parents=True, exist_ok=True)
-    book = save_tiff(load_pages(pages), work / f"{piece.name}.tif")
-    mxl = audiveris.transcribe(book, work)[0]
-    dest = RESULTS / variant / f"{piece.name}.musicxml"
-    clean_lyrics(merge_parts(m21.converter.parse(mxl))).write("musicxml", dest)
-    return dest
+    return transcribe(pages, RESULTS / variant / piece.name, log=lambda msg: None)[0]
 
 
 def main() -> None:
