@@ -20,6 +20,7 @@
 - Phase 1 (CLI pipeline) is working; see [phase1-progress.md](phase1-progress.md).
 - Phase 2 (web MVP) is working locally; see [phase2-progress.md](phase2-progress.md).
 - Round 1 on real samples: see [samples-round1.md](samples-round1.md).
+- Round 2 (parts named differently per system, credits): see [samples-round2.md](samples-round2.md).
 
 ## Working rule
 

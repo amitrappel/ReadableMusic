@@ -31,3 +31,20 @@ def test_align_matches_full_names_to_abbreviations():
 def test_align_unnamed_staves_follow_order():
     vs = voices("S", "A", "T", "B")
     assert align(["Voice", "Voice", "T", "B"], vs) == [0, 1, 2, 3]
+
+
+def test_align_uses_every_name_of_a_voice():
+    # Singers' names on the first system, voice names after it.
+    vs = voices("Shani", "Yael", "Salit", "Guy", "Doron")
+    for v, short in zip(vs, ["S", "Mezzo", "A", "T", "B"]):
+        v.names[short] += 3
+    assert align(["Mezzo", "T"], vs) == [1, 3]
+
+
+def test_voice_name_prefers_first_system_and_keeps_abbreviation():
+    v = Voice(first="Shani")
+    v.names.update({"Shani": 1, "S": 5})
+    assert (v.name, v.abbreviation) == ("Shani", "S")
+    v = Voice(first="13")  # OCR noise on the first system
+    v.names.update({"13": 1, "Tenor": 4})
+    assert (v.name, v.abbreviation) == ("Tenor", None)

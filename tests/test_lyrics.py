@@ -1,4 +1,6 @@
-from readablemusic.lyrics import clean_text
+import music21 as m21
+
+from readablemusic.lyrics import clean_text, close_words
 
 
 def test_ligatures_are_split():
@@ -10,7 +12,6 @@ def test_niqqud_is_removed():
 
 
 def test_tidy_drops_chords_and_credits():
-    import music21 as m21
     from readablemusic.tidy import tidy
     m = m21.stream.Measure([m21.harmony.ChordSymbol("D7"), m21.expressions.TextExpression("G7"),
                             m21.expressions.TextExpression("Last time, end"),
@@ -19,3 +20,14 @@ def test_tidy_drops_chords_and_credits():
     s = tidy(m21.stream.Score([m21.stream.Part([m])]))
     assert [t.content for t in s.recurse().getElementsByClass(m21.expressions.TextExpression)] == ["Last time, end"]
     assert not s.recurse().getElementsByClass(m21.harmony.Harmony)
+
+
+def test_open_words_are_closed():
+    part = m21.stream.Part()
+    for text, syllabic in [("pa...", "begin"), ("la", "single"), ("hal", "begin"), ("le", "middle"), ("lu", "end"),
+                           ("oh", "begin")]:
+        n = m21.note.Note("C4")
+        n.lyrics.append(m21.note.Lyric(text, syllabic=syllabic))
+        part.append(n)
+    close_words(part)
+    assert [n.lyrics[0].syllabic for n in part.notes] == ["single", "single", "begin", "middle", "end", "single"]

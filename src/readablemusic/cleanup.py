@@ -1,5 +1,7 @@
 """Page clean-up before OMR."""
 
+from typing import NamedTuple
+
 import numpy as np
 from PIL import Image
 
@@ -18,20 +20,34 @@ def blank_outside_music(img: Image.Image, interline: float) -> Image.Image:
     of MARGIN_GAP empty interlines, or at most MAX_ABOVE / MAX_BELOW interlines for tight
     layouts; everything beyond is blanked.
     """
+    band = music_band(img, interline)
+    if band is None:
+        return img
+    out = np.asarray(img.convert("L")).copy()
+    out[:max(band.top, 0)] = 255
+    out[band.bottom:] = 255
+    return Image.fromarray(out)
+
+
+class Band(NamedTuple):
+    first: int  # first staff line
+    last: int  # last staff line
+    top: int  # rows top..bottom are kept for OMR
+    bottom: int
+
+
+def music_band(img: Image.Image, interline: float) -> Band | None:
     a = np.asarray(img.convert("L"))
     black = a <= _otsu(a)  # Otsu puts levels up to and including t in the dark class
     extent = staff_extent(black, interline)
     if extent is None:
-        return img
+        return None
     first, last = extent
     empty = black.sum(axis=1) <= black.shape[1] // 200  # tolerate scan specks
     gap = max(1, round(MARGIN_GAP * interline))
     top = max(_gap(empty, first, -1, gap), round(first - MAX_ABOVE * interline))
     bottom = min(_gap(empty, last, +1, gap), round(last + MAX_BELOW * interline))
-    out = a.copy()
-    out[:max(top, 0)] = 255
-    out[bottom:] = 255
-    return Image.fromarray(out)
+    return Band(first, last, top, bottom)
 
 
 def staff_extent(black: np.ndarray, interline: float, columns: int = 300) -> tuple[int, int] | None:

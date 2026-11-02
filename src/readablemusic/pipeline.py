@@ -3,14 +3,16 @@
 from pathlib import Path
 
 import music21 as m21
+import pypdfium2 as pdfium
 
 from . import audiveris
-from .cleanup import blank_outside_music
+from .cleanup import blank_outside_music, music_band
+from .credits import add_credits, drop_credit_text, read_credits
 from .lyrics import clean_lyrics
 from .pages import load_pages, save_tiff
 from .parts import merge_parts
 from .scale import staff_evidence
-from .textlayer import fix_lyrics, has_text
+from .textlayer import fix_text, has_text
 from .tidy import tidy
 
 MIN_STAFF_SHARE = 0.1  # pages with less staff evidence than this share of the best page may hold no music
@@ -25,6 +27,14 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
     support = [staff_evidence(page)[1] for page in pages]
     # All pages share one scale (see pages.py), so the best page's interline holds for all.
     interline = staff_evidence(pages[support.index(max(support))])[0]
+    # PDFs from notation software carry their text, including the credits blanked below.
+    source = inputs[0]
+    text_pdf = len(inputs) == 1 and source.suffix.lower() == ".pdf" and has_text(source)
+    credits = []
+    if text_pdf and (band := music_band(pages[0], interline)):
+        k = pdfium.PdfDocument(source)[0].get_width() / pages[0].width  # points per pixel
+        credits = read_credits(source, (band.first * k, band.top * k, band.bottom * k))
+        log("Credits: " + ("; ".join(f"{c.kind or 'name'}: {c.text}" for c in credits) or "none found"))
     pages = [blank_outside_music(page, interline) for page in pages]
     try:
         mxls = audiveris.transcribe(save_tiff(pages, work / f"{inputs[0].stem}.tif"), work)
@@ -37,22 +47,22 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
         log(f"Audiveris failed; retrying without {len(pages) - len(music)} page(s) that look staff-less")
         mxls = audiveris.transcribe(save_tiff(music, work / f"{inputs[0].stem}.tif"), work)
         pages = music
-    # PDFs from notation software carry the real lyrics as text; sheet n must be page n.
-    source = inputs[0]
-    if len(inputs) == 1 and source.suffix.lower() == ".pdf" and len(pages) == len(support) \
-            and has_text(source):
+    # The real lyrics and words are in the PDF's text; sheet n must be page n.
+    if text_pdf and len(pages) == len(support):
         omr = work / f"{source.stem}.omr"
-        if (fixed := fix_lyrics(omr, source)):
+        if (fixed := fix_text(omr, source)):
             try:
                 mxls = audiveris.export(omr, work)
-                log(f"Corrected {fixed} syllable(s) from the PDF text")
+                log(f"Corrected {fixed} lyric syllable(s) or word(s) from the PDF text")
             except audiveris.AudiverisError as e:
                 log(f"Keeping the OCR'd lyrics; re-export failed: {e}")
     results = []
-    for mxl in mxls:
-        score = tidy(clean_lyrics(merge_parts(m21.converter.parse(mxl))))
+    for n, mxl in enumerate(mxls):
+        score = drop_credit_text(tidy(clean_lyrics(merge_parts(m21.converter.parse(mxl)))), credits)
         dest = out_dir / mxl.with_suffix(".musicxml").name
         score.write("musicxml", dest, makeNotation=False)  # Audiveris output is already notated
+        if n == 0:
+            add_credits(dest, credits)
         log(f"Wrote {dest} ({len(score.parts)} parts)")
         results.append(dest)
     return results

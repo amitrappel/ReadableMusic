@@ -18,6 +18,12 @@ SVGLIB_CONTENT_RATIO = 0.75
 RESOURCES = str(files("verovio") / "data")  # Verovio sets its default only in the importing thread
 FONTS = files("readablemusic") / "fonts"
 HEBREW_TEXT = re.compile(r">([^<>]*[֐-׿][^<>]*)<")
+# Verovio nests the credits' position and size in tspans, which svglib ignores.
+CREDIT_TEXT = re.compile(
+    r'<text font-size="0px">\s*<tspan [^>]*class="rend"( font-weight="bold")? x="([\d.]+)" y="([\d.]+)" '
+    r'text-anchor="(\w+)">\s*<tspan [^>]*class="text">\s*<tspan font-size="([\d.]+)px">([^<]*)</tspan>'
+    r'\s*</tspan>\s*</tspan>\s*</text>')
+TITLE_SCALE = 1.5  # Verovio prints all credits at one size; the title is the bold one
 
 TEXT_FONT = "DavidLibre"  # has both Latin and Hebrew letters
 
@@ -32,12 +38,17 @@ def _for_reportlab(svg: str) -> str:
     Verovio asks for Times, which svglib always maps to the built-in Latin-only font, so
     the family is renamed. Purely Hebrew text is reversed, since reportlab draws all text
     left to right; that is enough for lyric syllables, and text mixing Hebrew with Latin
-    letters or digits is left as it is.
+    letters or digits is left as it is. The credits' nested text is flattened.
     """
     def flip(m: re.Match) -> str:
         text = m.group(1)
         return m.group(0) if re.search(r"[A-Za-z0-9]", text) else f">{text[::-1]}<"
     svg = svg.replace('font-family="Times, serif"', f'font-family="{TEXT_FONT}"')
+    def credit(m: re.Match) -> str:
+        bold, x, y, anchor, size, text = m.groups()
+        size, weight = (float(size) * TITLE_SCALE, ' font-weight="bold"') if bold else (float(size), "")
+        return f'<text x="{x}" y="{y}" text-anchor="{anchor}" font-size="{size:g}px"{weight}>{text}</text>'
+    svg = CREDIT_TEXT.sub(credit, svg)
     return HEBREW_TEXT.sub(flip, svg)
 
 
@@ -54,8 +65,8 @@ def to_pdf(musicxml: Path, dest: Path, staff_mm: float = 5.0) -> int:
         "pageWidth": round(A4_MM[0] * 10 * enlarge),  # Verovio units are tenths of a millimetre
         "pageHeight": round(A4_MM[1] * 10 * enlarge),
         "breaks": "auto",  # reflow instead of copying the scan's system breaks
-        "header": "none",  # the Windows build garbles the en-dashes of its page-number header
-        "footer": "none",
+        "header": "encoded",  # the credits only: the Windows build garbles its page-number header
+        "footer": "encoded",
     })
     # loadData, not loadFile: Verovio cannot open non-ASCII paths on Windows
     if not tk.loadData(musicxml.read_text(encoding="utf-8")):

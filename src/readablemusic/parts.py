@@ -2,8 +2,10 @@
 
 Audiveris joins staves of different systems into one part only when their OCR'd names
 match exactly. With hidden empty staves and OCR noise ("B l", "Bl", "B1") a 9-voice score
-can come out as 40+ parts, each hidden in most systems. Here each system's visible staves
-are aligned, in order, to one list of voices using a fuzzy name match.
+can come out as 40+ parts, each hidden in most systems. Here systems that show every
+staff are matched by position, whatever their names (a score may name the singers on the
+first system and the voices after it); the other systems' visible staves are aligned, in
+order, to the voices using a fuzzy match against all the names seen so far.
 """
 
 import copy
@@ -19,11 +21,24 @@ UNNAMED = "Voice"  # Audiveris's name for a staff whose name it could not read
 @dataclass
 class Voice:
     names: Counter = field(default_factory=Counter)
+    first: str = UNNAMED  # name on the first system, where scores print the full name
 
     @property
     def name(self) -> str:
-        named = [(n, c) for n, c in self.names.items() if n != UNNAMED]
+        if name_key(self.first):
+            return self.first
+        named = [(n, c) for n, c in self.names.items() if name_key(n)]
         return max(named, key=lambda nc: (nc[1], -len(nc[0])))[0] if named else UNNAMED
+
+    @property
+    def abbreviation(self) -> str | None:
+        """The most common other name, as printed on the later systems."""
+        named = [(n, c) for n, c in self.names.items() if name_key(n) and _plain(n) != _plain(self.name)]
+        return max(named, key=lambda nc: (nc[1], -len(nc[0])))[0] if named else None
+
+    def similarity(self, staff: str) -> float:
+        named = [n for n in self.names if name_key(n)]
+        return max((similarity(staff, n) for n in named), default=similarity(staff, UNNAMED))
 
 
 def name_key(name: str) -> str:
@@ -72,7 +87,7 @@ def align(staves: list[str], voices: list[Voice]) -> list[int | None]:
             options = [(best[i - 1][j] - 5.0, "new")]  # staff that matches no voice
             if j:
                 options.append((best[i][j - 1], "skip"))  # voice hidden in this system
-                options.append((best[i - 1][j - 1] + similarity(staves[i - 1], voices[j - 1].name), "match"))
+                options.append((best[i - 1][j - 1] + voices[j - 1].similarity(staves[i - 1]), "match"))
             best[i][j], move[i][j] = max(options, key=lambda o: o[0])
     result: list[int | None] = [None] * n
     i, j = n, m
@@ -114,13 +129,13 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
     # Visible staves per system, top to bottom (parts are listed in vertical order).
     systems = [[k for k in range(len(parts)) if not _is_hidden(measures[k][a])] for a, _ in bounds]
 
-    # Voices: start from the fullest system, then add any staff that matches none.
+    # Voices: start from the fullest systems, then add any staff that matches none.
     voices: list[Voice] = []
     order = sorted(range(len(systems)), key=lambda s: -len(systems[s]))
     mapping: dict[int, dict[int, int]] = {}
     for s in order:
         names = [str(parts[k].partName or UNNAMED) for k in systems[s]]
-        matched = align(names, voices)
+        matched = list(range(len(names))) if len(names) == len(voices) else align(names, voices)
         for pos, (k, v) in enumerate(zip(systems[s], matched)):
             if v is None:
                 # Insert a new voice after the voice matched just above, keeping vertical order.
@@ -135,6 +150,8 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
                 voices.insert(v, Voice())
                 matched[pos] = v
             voices[v].names[names[pos]] += 1
+            if s == 0:
+                voices[v].first = names[pos]
         mapping[s] = dict(zip(systems[s], matched))
 
     out = m21.stream.Score()
@@ -144,6 +161,7 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
             continue
         part = m21.stream.Part()
         part.partName = voice.name
+        part.partAbbreviation = voice.abbreviation
         current: dict[type, str] = {}
         for s, (a, b) in enumerate(bounds):
             k = sources[s]
