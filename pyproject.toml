@@ -15,6 +15,7 @@ dependencies = [
     "numpy>=2.5.4",
     "pillow>=13.0.0",
     "pypdfium2>=5.14.0",
+    "python-bidi>=0.6.12",
     "python-multipart>=0.0.32",
     "reportlab>=5.1.0",
     "svglib>=2.3.2",

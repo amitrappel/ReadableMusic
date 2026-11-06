@@ -1,4 +1,6 @@
-from readablemusic.parts import Voice, align, name_key
+import music21 as m21
+
+from readablemusic.parts import Voice, align, name_key, standardize_names, voice_type
 
 
 def voices(*names):
@@ -48,3 +50,47 @@ def test_voice_name_prefers_first_system_and_keeps_abbreviation():
     v = Voice(first="13")  # OCR noise on the first system
     v.names.update({"13": 1, "Tenor": 4})
     assert (v.name, v.abbreviation) == ("Tenor", None)
+
+
+def _part(voice, *pitches, clef=None):
+    part = m21.stream.Part()
+    part.source_voice, part.partName = voice, voice.name
+    m = m21.stream.Measure()
+    if clef:
+        m.append(clef)
+    for p in pitches:
+        m.append(m21.note.Note(p))
+    part.append(m)
+    return part
+
+
+def _voice(first, **names):
+    v = Voice(first=first)
+    v.names.update({first: 1, **names})
+    return v
+
+
+def test_voice_type_reads_styles_and_ocr():
+    assert voice_type("Soprano") == voice_type("S.") == ("Soprano", "S", "")
+    assert voice_type("T1 1") == voice_type("Tenorl") == ("Tenor", "T", "1")
+    assert voice_type("Mezzo") == ("Mezzo-soprano", "Mz", "")
+    assert voice_type("Shani") is None
+
+
+def test_standard_names_move_singers_to_a_footnote():
+    score = m21.stream.Score([
+        _part(_voice("Shani", S=3), "A4"),
+        _part(_voice("Yael", Mezzo=3), "F4"),
+        _part(_voice("Lead"), "C4"),
+        _part(_voice("Guy"), "C4", clef=m21.clef.Treble8vbClef()),  # singers only: from the clef
+    ])
+    footnotes = standardize_names(score)
+    assert [(p.partName, p.partAbbreviation) for p in score.parts][:2] == [("Soprano", "S"), ("Mezzo-soprano", "Mz")]
+    assert score.parts[2].partName == "Lead"
+    assert footnotes == ["Original part names: Soprano – Shani, Mezzo-soprano – Yael, Tenor – Guy"]
+
+
+def test_parts_of_one_voice_type_are_numbered():
+    score = m21.stream.Score([_part(_voice("Tenor"), "C4"), _part(_voice("Tenor"), "C4")])
+    assert standardize_names(score) == []
+    assert [p.partName for p in score.parts] == ["Tenor 1", "Tenor 2"]

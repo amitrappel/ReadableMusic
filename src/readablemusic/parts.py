@@ -162,6 +162,7 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
         part = m21.stream.Part()
         part.partName = voice.name
         part.partAbbreviation = voice.abbreviation
+        part.source_voice = voice  # for standardize_names
         current: dict[type, str] = {}
         for s, (a, b) in enumerate(bounds):
             k = sources[s]
@@ -169,6 +170,80 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
                 part.append(_measure_for(measures, k, idx, first=(idx == a), current=current))
         out.append(part)
     return out
+
+
+VOICE_TYPES = {  # standard name and abbreviation of each way scores name a voice
+    ("Soprano", "S"): ("s", "sop", "sopr", "soprano", "סופרן"),
+    ("Mezzo-soprano", "Mz"): ("m", "mz", "mzs", "mez", "mezzo", "mezzosoprano", "מצו", "מצו-סופרן"),
+    ("Alto", "A"): ("a", "alt", "alto", "contralto", "אלט"),
+    ("Tenor", "T"): ("t", "ten", "tenor", "טנור"),
+    ("Baritone", "Bar"): ("bar", "bari", "baritone", "בריטון"),
+    ("Bass", "B"): ("b", "bs", "bass", "basso", "בס"),
+}
+STEMS = {stem: voice for voice, stems in VOICE_TYPES.items() for stem in stems}
+ROLES = {"lead", "solo", "malesolo", "femalesolo", "descant", "piano"}  # kept as they are
+SHARED = {"G": ("Soprano, Alto", "S A"), "F": ("Tenor, Bass", "T B")}  # two voices on one staff
+
+
+def voice_type(name: str) -> tuple[str, str, str] | None:
+    """Standard name, abbreviation and number of a staff name: 'T1 1' -> ('Tenor', 'T', '1')."""
+    plain = re.sub(r"[^\w]", "", name.lower())
+    stem = plain.rstrip("0123456789")
+    digits = re.sub(r"\D", "", plain)[:1]
+    if stem not in STEMS and stem[-1:] in ("l", "i") and stem[:-1] in STEMS:  # OCR: 'Tenorl', 'BI'
+        stem, digits = stem[:-1], "1"
+    return (*STEMS[stem], digits) if stem in STEMS else None
+
+
+def _voice_from_range(part: m21.stream.Part) -> tuple[str, str, str]:
+    """Guess the voice type of a part without one from its clef and pitches."""
+    clef = next(iter(part.recurse().getElementsByClass(m21.clef.Clef)), None)
+    sign, octave = (clef.sign, clef.octaveChange) if clef else ("G", 0)
+    notes = list(part.recurse().notes)
+    if any(n.isChord for n in notes) or any(m.voices for m in part.getElementsByClass(m21.stream.Measure)):
+        return (*SHARED.get(sign, SHARED["G"]), "")
+    pitches = sorted(p.midi for n in notes for p in n.pitches)
+    middle = pitches[len(pitches) // 2] if pitches else 60
+    if sign == "F":
+        return (("Baritone", "Bar", "") if middle >= 50 else ("Bass", "B", ""))
+    if octave < 0:
+        return ("Tenor", "T", "")
+    return (("Soprano", "S", "") if middle >= 67 else ("Mezzo-soprano", "Mz", "") if middle >= 64
+            else ("Alto", "A", ""))
+
+
+def standardize_names(score: m21.stream.Score) -> list[str]:
+    """Give each part its standard voice name; return footnotes for the names it replaces.
+
+    A score may name the singers on the first system; those go to a footnote. Parts that
+    name no voice type anywhere get one from their clef and range, and roles such as
+    'Lead' stay as they are.
+    """
+    named: list[tuple[m21.stream.Part, tuple[str, str, str] | None]] = []
+    for part in score.parts:
+        voice = part.source_voice
+        types = (voice_type(n) for n, _ in voice.names.most_common())
+        found = next((t for t in types if t), None)
+        if found is None and re.sub(r"[^\w]", "", voice.name.lower()) in ROLES:
+            named.append((part, None))
+        else:
+            named.append((part, found or _voice_from_range(part)))
+    counts = Counter(t[0] for _, t in named if t and not t[2])
+    numbers: Counter = Counter()
+    originals = []
+    for part, kind in named:
+        if kind is None:
+            continue
+        name, abbreviation, number = kind
+        if not number and counts[name] > 1:  # two parts of one voice type are numbered
+            numbers[name] += 1
+            number = str(numbers[name])
+        part.partName = f"{name} {number}" if number else name
+        part.partAbbreviation = abbreviation + number
+        first = part.source_voice.first
+        if len(re.sub(r"[^\w]|\d", "", first)) >= 2 and first != UNNAMED and voice_type(first) is None:
+            originals.append(f"{part.partName} – {first}")
+    return ["Original part names: " + ", ".join(originals)] if originals else []
 
 
 def _signature(el) -> str:

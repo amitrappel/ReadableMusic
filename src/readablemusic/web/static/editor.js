@@ -95,13 +95,26 @@ function render() {
     pageWidth: Math.round($("score").clientWidth * 100 / SCALE),
     adjustPageHeight: true,
     breaks: "auto",
-    header: "none",
-    footer: "none",
+    header: "encoded",  // the title and credits, as in the PDF
+    footer: "encoded",
   });
   tk.loadData(new XMLSerializer().serializeToString(copy));
   let svg = "";
   for (let p = 1; p <= tk.getPageCount(); p++) svg += tk.renderToSVG(p);
   $("score").innerHTML = svg;
+  showFootnotes();
+}
+
+// Verovio does not print footnotes; the PDF step draws them, and here they go under the score.
+function showFootnotes() {
+  const fields = [...xml.querySelectorAll('miscellaneous-field[name="footnote"]'), ...xml.querySelectorAll("rights")];
+  $("footnotes").innerHTML = "";
+  for (const field of fields) {
+    const line = document.createElement("p");
+    line.textContent = field.textContent;
+    line.dir = "auto";
+    $("footnotes").append(line);
+  }
 }
 
 function markDirty() {

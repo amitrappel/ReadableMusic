@@ -21,6 +21,7 @@
 - Phase 2 (web MVP) is working locally; see [phase2-progress.md](phase2-progress.md).
 - Round 1 on real samples: see [samples-round1.md](samples-round1.md).
 - Round 2 (parts named differently per system, credits): see [samples-round2.md](samples-round2.md).
+- Round 3 (text first, standard output): see [samples-round3.md](samples-round3.md).
 
 ## Working rule
 

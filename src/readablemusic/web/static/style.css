@@ -43,6 +43,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 #status { color: var(--muted); }
 #help { margin-top: 1rem; }
 
+#footnotes { max-width: 1100px; margin: 0 auto 1rem; font-size: 0.8rem; }
+#footnotes p { margin: 0.1rem 0; }
 #score { max-width: 1100px; margin: 1rem auto; background: var(--paper); }
 #score svg { display: block; width: 100%; height: auto; }
 #score g.note { cursor: pointer; }
