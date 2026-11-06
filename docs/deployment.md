@@ -10,7 +10,7 @@ is pushed also keeps the AGPL promise on the upload page: the source link shows 
    too small: even a 2-page score peaks at 1.25 GB.
 2. New Project, Deploy from GitHub repo, `amitrappel/ReadableMusic`. Railway finds the
    `Dockerfile` by itself.
-3. In the service's Settings:
+3. In the service's Variables, add `PORT` = `8000`. Then in its Settings:
    - Source: choose the branch to deploy.
    - Networking: Generate Domain, target port 8000.
    - Deploy: health check path `/`. Leave Serverless off (see below).
