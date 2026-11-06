@@ -128,7 +128,7 @@ def test_a_stray_second_voice_does_not_make_a_shared_staff():
         m.append(m21.note.Note("A4"))
         part.append(m)
     part.getElementsByClass(m21.stream.Measure)[0].append(m21.chord.Chord(["A4", "F4"]))
-    standardize_names(m21.stream.Score([part]))
+    standardize_names(m21.stream.Score([part, _part(_voice("Voice"), "C3", clef=m21.clef.BassClef())]))
     assert part.partName == "Soprano"
 
 
