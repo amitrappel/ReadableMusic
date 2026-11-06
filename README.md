@@ -20,6 +20,11 @@ uv run python eval/samples.py             # every file in samples/raw -> work/sa
 uv run pytest
 ```
 
+## Deployment
+
+The `Dockerfile` holds everything the web app needs. See
+[docs/deployment.md](docs/deployment.md).
+
 ## License
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE).

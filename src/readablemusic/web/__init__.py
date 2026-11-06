@@ -3,22 +3,28 @@
 Run with `uv run readablemusic-web` and open http://127.0.0.1:8000.
 """
 
+import asyncio
+import html
 import json
+import multiprocessing
 import os
 import re
 import shutil
+import threading
 import time
 import traceback
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from ..engrave import to_pdf
+from ..pages import page_count
 from ..pipeline import transcribe
 
 STATIC = Path(__file__).parent / "static"
@@ -26,12 +32,43 @@ DATA = Path(os.environ.get("READABLEMUSIC_DATA", "work/web"))
 KEEP_SECONDS = 24 * 3600
 MAX_UPLOAD_BYTES = 50_000_000
 MAX_SCORE_BYTES = 20_000_000
+MAX_PAGES = 30
+MAX_WAITING = 5  # jobs queued or running; further uploads are turned away
+JOBS_PER_HOUR = 10  # from one address
 SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 JOB_ID = re.compile(r"[0-9a-f]{32}")
 
 app = FastAPI(title="ReadableMusic")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 worker = ThreadPoolExecutor(max_workers=1)  # Audiveris uses all cores; one job at a time
+slots = threading.BoundedSemaphore(MAX_WAITING)
+recent_jobs: dict[str, list[float]] = defaultdict(list)
+engraving = asyncio.Semaphore(1)  # a large score takes much memory and CPU
+
+
+def error_response(request: Request, status: int, detail: str):
+    if request.method == "POST":  # the upload is a plain form post, so the browser shows this as a page
+        page = f'<link rel="stylesheet" href="/static/style.css"><main class="narrow"><h1>ReadableMusic</h1>' \
+               f'<p>{html.escape(detail)}</p><p><a href="/">Back</a></p></main>'
+        return HTMLResponse(page, status)
+    return JSONResponse({"detail": detail}, status)
+
+
+@app.exception_handler(HTTPException)
+async def http_error(request: Request, exc: HTTPException):
+    return error_response(request, exc.status_code, str(exc.detail))
+
+
+@app.middleware("http")
+async def limit_body(request: Request, call_next):
+    """Turn big uploads away before parsing them, which writes the whole body to temporary files."""
+    if request.method in ("POST", "PUT"):
+        length = request.headers.get("content-length", "")
+        if not length.isdigit():
+            return error_response(request, 411, "The upload must state its length")
+        if int(length) > MAX_UPLOAD_BYTES + 1_000_000:  # room for the multipart headers
+            return error_response(request, 413, "Upload too large (50 MB at most)")
+    return await call_next(request)
 
 
 def job_dir(job: str) -> Path:
@@ -46,18 +83,38 @@ def set_status(folder: Path, state: str, **extra) -> None:
     tmp.replace(folder / "status.json")
 
 
+def isolated(fn, *args):
+    """Run fn in a new process: running out of memory then costs one job and not the whole
+    server, and the server holds on to none of the job's memory afterwards."""
+    with ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn")) as pool:
+        return pool.submit(fn, *args).result()
+
+
+def convert(folder: Path, inputs: list[Path]) -> None:
+    results = transcribe(inputs, folder, log=lambda msg: None)
+    if not results:
+        raise RuntimeError("No music was recognised on these pages.")
+    shutil.copy(results[0], folder / "score.musicxml")
+    to_pdf(folder / "score.musicxml", folder / "score.pdf")
+
+
 def run_job(folder: Path, inputs: list[Path]) -> None:
     set_status(folder, "running")
+    start = time.time()
     try:
-        results = transcribe(inputs, folder, log=lambda msg: None)
-        if not results:
-            raise RuntimeError("No music was recognised on these pages.")
-        shutil.copy(results[0], folder / "score.musicxml")
-        to_pdf(folder / "score.musicxml", folder / "score.pdf")
+        isolated(convert, folder, inputs)
         set_status(folder, "done")
+        shutil.rmtree(folder / "input", ignore_errors=True)  # the corrections only need the score
+        shutil.rmtree(folder / "work", ignore_errors=True)
+        print(f"Job {folder.name} done in {time.time() - start:.0f} s", flush=True)
     except Exception as e:
+        traceback.print_exc()
         (folder / "error.log").write_text(traceback.format_exc(), encoding="utf-8")
-        set_status(folder, "failed", error=str(e) or type(e).__name__)
+        # Other exceptions' messages can hold server paths.
+        error = str(e) if type(e) is RuntimeError else "Recognition failed. A sharper scan or fewer pages may help."
+        set_status(folder, "failed", error=error)
+    finally:
+        slots.release()
 
 
 def remove_old_jobs() -> None:
@@ -68,34 +125,69 @@ def remove_old_jobs() -> None:
             shutil.rmtree(folder, ignore_errors=True)
 
 
+def remove_old_jobs_forever() -> None:
+    while True:
+        remove_old_jobs()
+        time.sleep(3600)
+
+
+def client_address(request: Request) -> str:
+    # Railway's edge overwrites this header with the address it saw, so clients cannot forge it.
+    return request.headers.get("x-real-ip") or request.client.host
+
+
+def too_many_jobs(address: str) -> bool:
+    hour_ago = time.time() - 3600
+    recent_jobs[address] = [t for t in recent_jobs[address] if t > hour_ago]
+    return len(recent_jobs[address]) >= JOBS_PER_HOUR
+
+
+async def save_uploads(files: list[UploadFile], folder: Path) -> list[Path]:
+    inputs, total = [], 0
+    for k, upload in enumerate(files):
+        suffix = Path(upload.filename or "").suffix.lower()
+        if suffix not in SUFFIXES:
+            raise HTTPException(400, f"Unsupported file type: {upload.filename}")
+        data = await upload.read()
+        total += len(data)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "Upload too large (50 MB at most)")
+        path = folder / f"page-{k:03}{suffix}"
+        path.write_bytes(data)
+        inputs.append(path)
+    if not inputs:
+        raise HTTPException(400, "No files uploaded")
+    try:
+        pages = sum([await run_in_threadpool(page_count, path) for path in inputs])
+    except Exception:  # the PDF and image libraries raise many kinds
+        raise HTTPException(400, "Could not read these files. Are they unprotected PDFs or images?")
+    if pages > MAX_PAGES:
+        raise HTTPException(400, f"Too long: {pages} pages ({MAX_PAGES} at most)")
+    return inputs
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
 
 
 @app.post("/jobs")
-async def create_job(files: list[UploadFile]):
-    remove_old_jobs()
+async def create_job(files: list[UploadFile], request: Request):
+    address = client_address(request)
+    if too_many_jobs(address):
+        raise HTTPException(429, f"At most {JOBS_PER_HOUR} conversions an hour; please try again later.")
     job = uuid.uuid4().hex
     folder = DATA / job
     (folder / "input").mkdir(parents=True)
-    inputs, total = [], 0
-    for k, upload in enumerate(files):
-        suffix = Path(upload.filename or "").suffix.lower()
-        if suffix not in SUFFIXES:
-            shutil.rmtree(folder)
-            raise HTTPException(400, f"Unsupported file type: {upload.filename}")
-        data = await upload.read()
-        total += len(data)
-        if total > MAX_UPLOAD_BYTES:
-            shutil.rmtree(folder)
-            raise HTTPException(413, "Upload too large (50 MB at most)")
-        path = folder / "input" / f"page-{k:03}{suffix}"
-        path.write_bytes(data)
-        inputs.append(path)
-    if not inputs:
+    try:
+        inputs = await save_uploads(files, folder / "input")
+    except HTTPException:
         shutil.rmtree(folder)
-        raise HTTPException(400, "No files uploaded")
+        raise
+    if not slots.acquire(blocking=False):
+        shutil.rmtree(folder)
+        raise HTTPException(503, "The server is busy; please try again in a few minutes.")
+    recent_jobs[address].append(time.time())
     set_status(folder, "queued")
     worker.submit(run_job, folder, inputs)
     return RedirectResponse(f"/jobs/{job}", status_code=303)
@@ -133,7 +225,8 @@ async def save_score(job: str, request: Request):
     tmp = folder / "edited.musicxml"
     tmp.write_bytes(data)
     try:
-        await run_in_threadpool(to_pdf, tmp, folder / "edited.pdf")
+        async with engraving:
+            await run_in_threadpool(to_pdf, tmp, folder / "edited.pdf")
     except ValueError as e:
         raise HTTPException(400, str(e))
     tmp.replace(folder / "score.musicxml")
@@ -143,4 +236,5 @@ async def save_score(job: str, request: Request):
 
 def main() -> None:
     import uvicorn
+    threading.Thread(target=remove_old_jobs_forever, daemon=True).start()
     uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", "8000")))

@@ -1,8 +1,21 @@
+import io
+import os
+import threading
+from collections import defaultdict
+from concurrent.futures import BrokenExecutor
+
 import music21 as m21
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
-from readablemusic import web
+from readablemusic import audiveris, web
+
+
+def png() -> bytes:
+    buffer = io.BytesIO()
+    Image.new("L", (8, 8)).save(buffer, "png")
+    return buffer.getvalue()
 
 
 class Inline:
@@ -23,12 +36,15 @@ def fake_transcribe(inputs, out_dir, log=print):
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(web, "DATA", tmp_path)
     monkeypatch.setattr(web, "worker", Inline())
+    monkeypatch.setattr(web, "isolated", lambda fn, *args: fn(*args))
     monkeypatch.setattr(web, "transcribe", fake_transcribe)
+    monkeypatch.setattr(web, "slots", threading.BoundedSemaphore(web.MAX_WAITING))
+    monkeypatch.setattr(web, "recent_jobs", defaultdict(list))
     return TestClient(web.app)
 
 
-def upload(client, name="scan.png"):
-    response = client.post("/jobs", files=[("files", (name, b"fake", "image/png"))], follow_redirects=False)
+def upload(client, name="scan.png", data=None):
+    response = client.post("/jobs", files=[("files", (name, data or png(), "image/png"))], follow_redirects=False)
     return response
 
 
@@ -62,3 +78,82 @@ def test_failed_job_reports_error(client, monkeypatch):
     job = upload(client).headers["location"].rsplit("/", 1)[1]
     status = client.get(f"/api/jobs/{job}").json()
     assert status["state"] == "failed" and "No music" in status["error"]
+
+
+def test_failure_message_hides_server_paths(client, monkeypatch):
+    def fail(*a, **k):
+        raise audiveris.AudiverisError("Audiveris failed (exit 1), see /data/x/audiveris.log")
+    monkeypatch.setattr(web, "transcribe", fail)
+    job = upload(client).headers["location"].rsplit("/", 1)[1]
+    status = client.get(f"/api/jobs/{job}").json()
+    assert status["state"] == "failed" and "/data" not in status["error"]
+
+
+def test_inputs_are_deleted_after_a_successful_job(client, tmp_path):
+    job = upload(client).headers["location"].rsplit("/", 1)[1]
+    assert not (tmp_path / job / "input").exists()
+
+
+def test_rejects_unreadable_files_and_too_many_pages(client, monkeypatch):
+    assert upload(client, data=b"not an image").status_code == 400
+    monkeypatch.setattr(web, "MAX_PAGES", 0)
+    response = upload(client)
+    assert response.status_code == 400 and "Too long" in response.text
+
+
+def test_rejected_uploads_leave_nothing_behind(client, tmp_path):
+    upload(client, data=b"not an image")
+    upload(client, "notes.exe")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_big_upload_is_refused_before_parsing(client, monkeypatch):
+    monkeypatch.setattr(web, "MAX_UPLOAD_BYTES", 0)
+    response = client.post("/jobs", content=b"x" * 2_000_000, headers={"content-type": "multipart/form-data; boundary=b"})
+    assert response.status_code == 413
+
+
+def test_upload_without_a_length_is_refused(client):
+    def chunks():
+        yield b"x"
+    response = client.post("/jobs", content=chunks(), headers={"content-type": "multipart/form-data; boundary=b"})
+    assert response.status_code == 411
+
+
+def test_full_queue_turns_uploads_away(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(web, "slots", threading.BoundedSemaphore(1))
+    web.slots.acquire()
+    response = upload(client)
+    assert response.status_code == 503 and "busy" in response.text
+    assert list(tmp_path.iterdir()) == []
+    assert not web.recent_jobs["testclient"]  # waiting for a free slot does not use up the hourly allowance
+
+
+def test_rate_limit_counts_the_address_the_proxy_saw(client, monkeypatch):
+    monkeypatch.setattr(web, "JOBS_PER_HOUR", 1)
+    def post(address):
+        return client.post("/jobs", files=[("files", ("a.png", png(), "image/png"))], follow_redirects=False,
+                           headers={"x-real-ip": address})
+    assert post("1.1.1.1").status_code == 303
+    assert post("1.1.1.1").status_code == 429
+    assert post("2.2.2.2").status_code == 303
+
+
+def test_slot_is_released_after_a_failed_job(client, monkeypatch):
+    monkeypatch.setattr(web, "slots", threading.BoundedSemaphore(1))
+    monkeypatch.setattr(web, "transcribe", lambda *a, **k: [])
+    assert upload(client).status_code == 303
+    assert upload(client).status_code == 303
+
+
+def test_form_errors_are_escaped_pages_and_api_errors_are_json(client):
+    response = upload(client, "<script>.exe")
+    assert response.status_code == 400 and "<script>" not in response.text and "Back" in response.text
+    assert client.get("/api/jobs/" + "0" * 32).json()["detail"].startswith("No such job")
+
+
+def test_isolated_runs_elsewhere_and_outlives_a_crash():
+    assert web.isolated(os.getpid) != os.getpid()
+    with pytest.raises(BrokenExecutor):
+        web.isolated(os._exit, 1)
+    assert web.isolated(os.getpid) != os.getpid()

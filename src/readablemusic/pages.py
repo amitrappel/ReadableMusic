@@ -12,20 +12,33 @@ PROBE_DPI = 200
 MIN_DPI, MAX_DPI = 150, 800
 MIN_SCALE, MAX_SCALE = 0.5, 3.0
 MAX_PIXELS = 19_000_000  # Audiveris rejects pages above 20 megapixels
+MAX_RENDER_PIXELS = 100_000_000  # above A4 at MAX_DPI; a PDF can declare any page size
+
+
+def page_count(path: Path) -> int:
+    if path.suffix.lower() == ".pdf":
+        return len(pdfium.PdfDocument(path))
+    with Image.open(path) as img:
+        return getattr(img, "n_frames", 1)
+
+
+def _render(page: pdfium.PdfPage, dpi: float) -> Image.Image:
+    width, height = page.get_size()
+    scale = min(dpi / 72, (MAX_RENDER_PIXELS / (width * height)) ** 0.5)
+    return page.render(scale=scale, grayscale=True).to_pil().convert("L")
 
 
 def _load_pdf(path: Path) -> list[Image.Image]:
     pdf = pdfium.PdfDocument(path)
     dpi = _pdf_dpi(pdf)
-    scale = dpi / 72
-    return [pdf[i].render(scale=scale, grayscale=True).to_pil().convert("L") for i in range(len(pdf))]
+    return [_render(pdf[i], dpi) for i in range(len(pdf))]
 
 
 def _pdf_dpi(pdf: pdfium.PdfDocument) -> int:
     """Choose one DPI for the whole PDF from the interline of its first few pages."""
     found = []
     for i in range(min(len(pdf), 3)):
-        probe = pdf[i].render(scale=PROBE_DPI / 72, grayscale=True).to_pil()
+        probe = _render(pdf[i], PROBE_DPI)
         if (interline := estimate_interline(probe)) is not None:
             found.append(interline)
     if not found:

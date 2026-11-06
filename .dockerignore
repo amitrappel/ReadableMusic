@@ -1,0 +1,9 @@
+# Only what the Dockerfile copies. Above all, keep samples/ (may be copyrighted) out of the image.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!README.md
+!LICENSE
+!src
+**/__pycache__
