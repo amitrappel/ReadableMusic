@@ -94,3 +94,59 @@ def test_parts_of_one_voice_type_are_numbered():
     score = m21.stream.Score([_part(_voice("Tenor"), "C4"), _part(_voice("Tenor"), "C4")])
     assert standardize_names(score) == []
     assert [p.partName for p in score.parts] == ["Tenor 1", "Tenor 2"]
+
+
+def test_voice_type_rejects_ocr_junk_and_reads_a_misread_b():
+    assert voice_type("TI]") is None
+    assert voice_type("82") == ("Bass", "B", "2")
+    assert voice_type("מצו-סופרן") == ("Mezzo-soprano", "Mz", "")
+
+
+def test_first_system_name_beats_later_abbreviations():
+    score = m21.stream.Score([_part(_voice("Baritone", B1=9), "C3")])
+    standardize_names(score)
+    assert score.parts[0].partName == "Baritone"
+
+
+def test_two_line_names_name_a_shared_staff():
+    score = m21.stream.Score([_part(_voice("Lead"), "C4"), _part(_voice("Bass"), "C3")])
+    assert standardize_names(score, {"Lead": "Tenor", "Bass": "Bari"}) == []
+    assert [(p.partName, p.partAbbreviation) for p in score.parts] == [("Tenor, Lead", "T L"), ("Baritone, Bass", "Bar B")]
+
+
+def test_four_unnamed_staves_are_satb():
+    score = m21.stream.Score([_part(_voice("Voice"), "A4"), _part(_voice("Voice"), "F4"),
+                              _part(_voice("Voice"), "A4"), _part(_voice("Voice"), "D3")])
+    assert standardize_names(score) == []
+    assert [p.partName for p in score.parts] == ["Soprano", "Alto", "Tenor", "Bass"]
+
+
+def test_a_stray_second_voice_does_not_make_a_shared_staff():
+    part = _part(_voice("Voice"), "A4")
+    for _ in range(9):
+        m = m21.stream.Measure()
+        m.append(m21.note.Note("A4"))
+        part.append(m)
+    part.getElementsByClass(m21.stream.Measure)[0].append(m21.chord.Chord(["A4", "F4"]))
+    standardize_names(m21.stream.Score([part]))
+    assert part.partName == "Soprano"
+
+
+def test_piano_is_kept_only_if_it_plays_like_one():
+    piano = _part(_voice("Piano"), "C4")
+    piano.getElementsByClass(m21.stream.Measure)[0].append(m21.chord.Chord(["C4", "E4", "G4"]))
+    voice = _part(_voice("Piano"), "A4", "A4")
+    assert standardize_names(m21.stream.Score([piano, voice])) == []
+    assert [p.partName for p in (piano, voice)] == ["Piano", "Soprano"]
+
+
+def test_a_lone_unnamed_staff_gets_no_voice_type():
+    part = _part(_voice("Voice"), "C3", clef=m21.clef.BassClef())
+    assert standardize_names(m21.stream.Score([part])) == []
+    assert (part.partName, part.partAbbreviation) == ("Voice", None)
+
+
+def test_a_role_is_capitalized():
+    part = _part(_voice("solo"), "C4")
+    standardize_names(m21.stream.Score([part]))
+    assert part.partName == "Solo"

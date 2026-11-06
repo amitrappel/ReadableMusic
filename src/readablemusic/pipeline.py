@@ -9,7 +9,7 @@ from . import audiveris
 from .cleanup import blank_outside_music, music_band, whiten
 from .lyrics import clean_lyrics
 from .pages import load_pages, save_tiff
-from .pagetext import CREDITS, Bounds, Item, drop_repeated_text, read_page_text, write_page_text
+from .pagetext import CREDITS, Bounds, Item, drop_repeated_text, read_page_text, stacked_names, write_page_text
 from .parts import merge_parts, standardize_names
 from .scale import staff_evidence
 from .textlayer import fix_text, has_text
@@ -71,10 +71,11 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
                 log(f"Corrected {fixed} lyric syllable(s) or word(s) from the PDF text")
             except audiveris.AudiverisError as e:
                 log(f"Keeping the OCR'd lyrics; re-export failed: {e}")
+    stacked = stacked_names(source) if text_pdf else {}
     results = []
     for n, mxl in enumerate(mxls):
         score = merge_parts(m21.converter.parse(mxl))
-        footnotes = standardize_names(score)
+        footnotes = standardize_names(score, stacked)
         score = drop_repeated_text(tidy(clean_lyrics(score)), items)
         dest = out_dir / mxl.with_suffix(".musicxml").name
         score.write("musicxml", dest, makeNotation=False)  # Audiveris output is already notated

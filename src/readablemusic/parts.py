@@ -174,7 +174,7 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
 
 VOICE_TYPES = {  # standard name and abbreviation of each way scores name a voice
     ("Soprano", "S"): ("s", "sop", "sopr", "soprano", "סופרן"),
-    ("Mezzo-soprano", "Mz"): ("m", "mz", "mzs", "mez", "mezzo", "mezzosoprano", "מצו", "מצו-סופרן"),
+    ("Mezzo-soprano", "Mz"): ("m", "mz", "mzs", "mez", "mezzo", "mezzosoprano", "מצו", "מצוסופרן"),
     ("Alto", "A"): ("a", "alt", "alto", "contralto", "אלט"),
     ("Tenor", "T"): ("t", "ten", "tenor", "טנור"),
     ("Baritone", "Bar"): ("bar", "bari", "baritone", "בריטון"),
@@ -183,11 +183,23 @@ VOICE_TYPES = {  # standard name and abbreviation of each way scores name a voic
 STEMS = {stem: voice for voice, stems in VOICE_TYPES.items() for stem in stems}
 ROLES = {"lead", "solo", "malesolo", "femalesolo", "descant", "piano"}  # kept as they are
 SHARED = {"G": ("Soprano, Alto", "S A"), "F": ("Tenor, Bass", "T B")}  # two voices on one staff
+SATB = (("Soprano", "S", ""), ("Alto", "A", ""), ("Tenor", "T", ""), ("Bass", "B", ""))
+PLAIN = re.compile(r"[\w .'-]+")  # what a staff name looks like; OCR of something else does not
+SHARED_SHARE = 0.25  # share of a part's measures with two voices at once that makes it a shared staff
+PIANO_SHARE = 0.1  # share of a part's notes in chords only a piano could play
+
+
+def _key(name: str) -> str:
+    return re.sub(r"[^\w]", "", name.lower())
 
 
 def voice_type(name: str) -> tuple[str, str, str] | None:
     """Standard name, abbreviation and number of a staff name: 'T1 1' -> ('Tenor', 'T', '1')."""
-    plain = re.sub(r"[^\w]", "", name.lower())
+    if not PLAIN.fullmatch(name):
+        return None
+    plain = _key(name)
+    if plain[:1] == "8" and len(plain) > 1:  # OCR: '82'
+        plain = "b" + plain[1:]
     stem = plain.rstrip("0123456789")
     digits = re.sub(r"\D", "", plain)[:1]
     if stem not in STEMS and stem[-1:] in ("l", "i") and stem[:-1] in STEMS:  # OCR: 'Tenorl', 'BI'
@@ -199,10 +211,11 @@ def _voice_from_range(part: m21.stream.Part) -> tuple[str, str, str]:
     """Guess the voice type of a part without one from its clef and pitches."""
     clef = next(iter(part.recurse().getElementsByClass(m21.clef.Clef)), None)
     sign, octave = (clef.sign, clef.octaveChange) if clef else ("G", 0)
-    notes = list(part.recurse().notes)
-    if any(n.isChord for n in notes) or any(m.voices for m in part.getElementsByClass(m21.stream.Measure)):
+    measures = [m for m in part.getElementsByClass(m21.stream.Measure) if m.recurse().notes]
+    double = sum(bool(m.voices) or any(n.isChord for n in m.recurse().notes) for m in measures)
+    if measures and double >= SHARED_SHARE * len(measures):
         return (*SHARED.get(sign, SHARED["G"]), "")
-    pitches = sorted(p.midi for n in notes for p in n.pitches)
+    pitches = sorted(p.midi for n in part.recurse().notes for p in n.pitches)
     middle = pitches[len(pitches) // 2] if pitches else 60
     if sign == "F":
         return (("Baritone", "Bar", "") if middle >= 50 else ("Bass", "B", ""))
@@ -212,36 +225,59 @@ def _voice_from_range(part: m21.stream.Part) -> tuple[str, str, str]:
             else ("Alto", "A", ""))
 
 
-def standardize_names(score: m21.stream.Score) -> list[str]:
+def _named_type(voice: Voice, stacked: dict[str, str]) -> tuple[str, str, str] | None:
+    """The voice type a part's names give: the first system spells them out, later ones may not."""
+    for lower, upper in stacked.items():  # 'Tenor' over 'Lead' beside one staff
+        if lower in voice.names:
+            kinds = [voice_type(n) or ((n.title(), n[:1].upper(), "") if _key(n) in ROLES else None)
+                     for n in (upper, lower)]
+            if all(kinds):
+                return ", ".join(k[0] for k in kinds), " ".join(k[1] for k in kinds), ""
+    names = [voice.first, *(n for n, _ in voice.names.most_common())]
+    return next(filter(None, map(voice_type, names)), None)
+
+
+def _keeps_role(part: m21.stream.Part) -> bool:
+    """'Lead' and 'Solo' stay. 'Piano' must play like one: Audiveris so names any braced pair."""
+    role = _key(part.source_voice.name)
+    if role == "piano":
+        notes = list(part.recurse().notes)
+        return sum(n.isChord and len(n.pitches) >= 3 for n in notes) >= PIANO_SHARE * max(len(notes), 1)
+    return role in ROLES
+
+
+def standardize_names(score: m21.stream.Score, stacked: dict[str, str] | None = None) -> list[str]:
     """Give each part its standard voice name; return footnotes for the names it replaces.
 
     A score may name the singers on the first system; those go to a footnote. Parts that
-    name no voice type anywhere get one from their clef and range, and roles such as
-    'Lead' stay as they are.
+    name no voice type anywhere get one from their clef and range, or by position when
+    four staves are named nothing at all, and roles such as 'Lead' stay as they are.
+    stacked holds names written on two lines, by their lower line.
     """
-    named: list[tuple[m21.stream.Part, tuple[str, str, str] | None]] = []
-    for part in score.parts:
-        voice = part.source_voice
-        types = (voice_type(n) for n, _ in voice.names.most_common())
-        found = next((t for t in types if t), None)
-        if found is None and re.sub(r"[^\w]", "", voice.name.lower()) in ROLES:
-            named.append((part, None))
-        else:
-            named.append((part, found or _voice_from_range(part)))
-    counts = Counter(t[0] for _, t in named if t and not t[2])
+    parts = list(score.parts)
+    read = [_named_type(p.source_voice, stacked or {}) for p in parts]
+    roles = [not kind and _keeps_role(p) for p, kind in zip(parts, read)]
+    kinds = [None if role else kind or _voice_from_range(p) for p, kind, role in zip(parts, read, roles)]
+    if len(parts) == 4 and not any(read) and not any(roles) and not any("," in k[0] for k in kinds):
+        kinds = list(SATB)
+    if len(parts) == 1 and not read[0] and not roles[0]:  # a lone melody: nothing says which voice
+        kinds = [(UNNAMED, None, "")]
+    counts =Counter(k[0] for k in kinds if k and not k[2])
     numbers: Counter = Counter()
     originals = []
-    for part, kind in named:
+    for part, kind in zip(parts, kinds):
         if kind is None:
+            part.partName = part.partName[:1].upper() + part.partName[1:]  # 'solo'
             continue
         name, abbreviation, number = kind
         if not number and counts[name] > 1:  # two parts of one voice type are numbered
             numbers[name] += 1
             number = str(numbers[name])
         part.partName = f"{name} {number}" if number else name
-        part.partAbbreviation = abbreviation + number
+        part.partAbbreviation = abbreviation + number if abbreviation else None
         first = part.source_voice.first
-        if len(re.sub(r"[^\w]|\d", "", first)) >= 2 and first != UNNAMED and voice_type(first) is None:
+        if (len(re.sub(r"[^\w]|\d", "", first)) >= 2 and first != UNNAMED and voice_type(first) is None
+                and PLAIN.fullmatch(first) and _key(first) not in ROLES):
             originals.append(f"{part.partName} – {first}")
     return ["Original part names: " + ", ".join(originals)] if originals else []
 

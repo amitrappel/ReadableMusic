@@ -40,6 +40,7 @@ SPACE = 0.2  # a gap of this many font heights between letters is a word space
 CENTRE = 0.2  # share of the page width around the middle that counts as centred
 SIMILAR = 0.7  # difflib ratio above which a text direction repeats text taken off the page
 PAD = 1.0  # points around a line of text when it is whitened
+MARGIN = 0.15  # share of the page width at the left that holds part names
 
 
 class Bounds(NamedTuple):
@@ -128,6 +129,25 @@ def runs(chars: list[Char]) -> list[Run]:
         else:
             run.chars.append(ch)
     return [r for r in out if r.text]
+
+
+def _stack(page_runs: list[Run], width: float) -> dict[str, str]:
+    names = [r for r in page_runs if r.box[2] < MARGIN * width and any(c.isalpha() for c in r.text)]
+    names.sort(key=lambda r: r.y)
+    return {lower.text: upper.text for upper, lower in zip(names, names[1:])
+            if lower.y - upper.y <= GAP * max(upper.size, lower.size)}
+
+
+def stacked_names(pdf_path: Path) -> dict[str, str]:
+    """Part names on two lines beside a staff, 'Tenor' over 'Lead', by the lower line.
+
+    Audiveris reads only the lower line, of a staff that two voices share.
+    """
+    stacked: dict[str, str] = {}
+    pdf = pdfium.PdfDocument(pdf_path)
+    for n in range(len(pdf)):
+        stacked |= _stack(runs(text_chars(pdf[n])), pdf[n].get_width())
+    return stacked
 
 
 def read_page_text(pdf_path: Path, bounds: list[Bounds | None]) -> list[Item]:
