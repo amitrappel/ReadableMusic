@@ -6,6 +6,7 @@ import music21 as m21
 import pypdfium2 as pdfium
 
 from . import audiveris
+from .clefs import fix_clefs
 from .cleanup import blank_outside_music, music_band, whiten
 from .lyrics import clean_lyrics, drop_stray_lines
 from .ocr import read_scan_text, repair_hebrew_credits
@@ -82,6 +83,8 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
     results = []
     for n, mxl in enumerate(mxls):
         score = merge_parts(drop_stray_lines(m21.converter.parse(mxl)))
+        if (clefs := fix_clefs(score)):
+            log(f"Reread {clefs} stretch(es) of music in the clef of the rest of their part")
         footnotes = standardize_names(score, stacked)
         score = drop_repeated_text(tidy(clean_lyrics(score)), items)
         dest = out_dir / mxl.with_suffix(".musicxml").name
