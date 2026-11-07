@@ -43,6 +43,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 #status { color: var(--muted); }
 #help { margin-top: 1rem; }
 
+#footnotes { max-width: 1100px; margin: 0 auto 1rem; font-size: 0.8rem; }
+#footnotes p { margin: 0.1rem 0; }
 #score { max-width: 1100px; margin: 1rem auto; background: var(--paper); }
 #score svg { display: block; width: 100%; height: auto; }
 #score g.note { cursor: pointer; }
@@ -68,3 +70,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 .panel[hidden] { display: none; }
 .panel h2 { margin: 0; font-size: 1.1rem; }
 .panel textarea { font: inherit; width: 100%; box-sizing: border-box; }
+#details label { display: block; }
+#details input { font: inherit; width: 100%; box-sizing: border-box; padding: 0.2rem 0.3rem; }
+.part-row { display: grid; grid-template-columns: 1fr 5rem; gap: 0.5rem; margin-bottom: 0.25rem; }

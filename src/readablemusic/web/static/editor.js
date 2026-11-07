@@ -1,4 +1,5 @@
-// Job page: wait for the conversion, then show the score and let the user fix its lyrics.
+// Job page: wait for the conversion, then show the score and let the user fix its lyrics,
+// credits and part names.
 // The MusicXML is edited in place as an XML document; Verovio renders a copy whose
 // <note> elements get ids n0, n1, ... so a click on the SVG leads back to the XML note.
 
@@ -95,13 +96,26 @@ function render() {
     pageWidth: Math.round($("score").clientWidth * 100 / SCALE),
     adjustPageHeight: true,
     breaks: "auto",
-    header: "none",
-    footer: "none",
+    header: "encoded",  // the title and credits, as in the PDF
+    footer: "encoded",
   });
   tk.loadData(new XMLSerializer().serializeToString(copy));
   let svg = "";
   for (let p = 1; p <= tk.getPageCount(); p++) svg += tk.renderToSVG(p);
   $("score").innerHTML = svg;
+  showFootnotes();
+}
+
+// Verovio does not print footnotes; the PDF step draws them, and here they go under the score.
+function showFootnotes() {
+  const fields = [...xml.querySelectorAll('miscellaneous-field[name="footnote"]'), ...xml.querySelectorAll("rights")];
+  $("footnotes").innerHTML = "";
+  for (const field of fields) {
+    const line = document.createElement("p");
+    line.textContent = field.textContent;
+    line.dir = "auto";
+    $("footnotes").append(line);
+  }
 }
 
 function markDirty() {
@@ -253,6 +267,7 @@ function updateCount() {
 
 function openPanel() {
   closePopup(true);
+  $("details").hidden = true;
   panelLines = lines();
   $("panel-part").replaceChildren(...panelLines.map((l, k) => new Option(l.label, k)));
   $("panel-verse").replaceChildren(...verses.map(v => new Option(v, v)));
@@ -270,6 +285,129 @@ function applyPanel() {
   markDirty();
   render();
   fillPanelText();
+}
+
+// ---- Edit the title, credits and part names
+
+const all = name => Array.from(xml.getElementsByTagName(name));
+const textLines = id => $(id).value.split("\n").map(s => s.trim()).filter(Boolean);
+const footnoteFields = () => all("miscellaneous-field").filter(f => f.getAttribute("name") === "footnote");
+const initials = name => name.split(/[\s,-]+/).filter(Boolean)
+  .map(w => /^\d/.test(w) ? w : w[0].toUpperCase()).join("");
+
+function make(name, text, attributes = {}) {
+  const el = xml.createElement(name);
+  el.textContent = text;
+  for (const [key, value] of Object.entries(attributes)) el.setAttribute(key, value);
+  return el;
+}
+
+function creators(type) {
+  return all("creator").filter(c => c.getAttribute("type") === type).map(c => c.textContent);
+}
+
+function creditsOf(type) {
+  return all("credit").filter(c => child(c, "credit-type")?.textContent === type)
+    .map(c => child(c, "credit-words")?.textContent || "");
+}
+
+function partRow(scorePart) {
+  const row = Object.assign(document.createElement("div"), { className: "part-row" });
+  const name = Object.assign(document.createElement("input"),
+    { value: child(scorePart, "part-name")?.textContent || "", dir: "auto", title: "Part name" });
+  const short = Object.assign(document.createElement("input"),
+    { value: child(scorePart, "part-abbreviation")?.textContent || "", dir: "auto", title: "Short name" });
+  name.addEventListener("input", () => { if (!short.dataset.typed) short.value = initials(name.value); });
+  short.addEventListener("input", () => { short.dataset.typed = "1"; });
+  row.append(name, short);
+  return row;
+}
+
+function openDetails() {
+  closePopup(true);
+  $("panel").hidden = true;
+  $("d-title").value = all("work-title")[0]?.textContent || creditsOf("title")[0] || "";
+  $("d-subtitle").value = creditsOf("subtitle").join("\n");
+  for (const type of ["composer", "lyricist", "arranger"]) $(`d-${type}`).value = creators(type).join(", ");
+  $("d-others").value = all("creator").filter(c => !c.getAttribute("type")).map(c => c.textContent).join("\n");
+  $("d-parts").replaceChildren(document.createTextNode("Parts: name and short name"), ...all("score-part").map(partRow));
+  $("d-footnotes").value = footnoteFields().map(f => f.textContent).join("\n");
+  $("d-rights").value = all("rights").map(r => r.textContent).join("\n");
+  $("details").hidden = false;
+  $("d-title").focus();
+}
+
+// The header as the PDF step writes it: see header_lines in pagetext.py.
+function headerLines(title, subtitles, music, words, arranger, others) {
+  const result = title ? [["title", "center", title]] : [];
+  result.push(...subtitles.map(s => ["subtitle", "center", s]));
+  if (music && music === words) result.push(["composer", "right", `Words and music: ${music}`]);
+  else {
+    if (music) result.push(["composer", "right", `Music: ${music}`]);
+    if (words) result.push(["lyricist", "left", `Words: ${words}`]);
+  }
+  if (arranger) result.push(["arranger", "right", `Arrangement: ${arranger}`]);
+  result.push(...others.map(name => ["", "left", name]));
+  return result;
+}
+
+function identification(root) {
+  let ident = child(root, "identification");
+  if (!ident) {
+    ident = xml.createElement("identification");
+    root.insertBefore(ident, child(root, "defaults") || all("credit")[0] || child(root, "part-list"));
+  }
+  return ident;
+}
+
+// MusicXML wants <work> first, creators and rights first in <identification>, its
+// <miscellaneous> last, and the credits just before the <part-list>.
+function applyDetails() {
+  const root = xml.documentElement;
+  const title = $("d-title").value.trim(), subtitles = textLines("d-subtitle"), others = textLines("d-others");
+  const [music, words, arranger] = ["composer", "lyricist", "arranger"].map(t => $(`d-${t}`).value.trim());
+  const footnotes = textLines("d-footnotes"), rights = textLines("d-rights");
+
+  [...all("work"), ...all("movement-title"), ...all("credit"), ...all("creator"), ...all("rights"), ...footnoteFields()]
+    .forEach(el => el.remove());
+  if (title) {
+    const work = xml.createElement("work");
+    work.append(make("work-title", title));
+    root.insertBefore(work, root.firstElementChild);
+  }
+  const ident = identification(root);
+  const typed = [["composer", music], ["lyricist", words], ["arranger", arranger]].filter(([, name]) => name);
+  ident.prepend(...typed.map(([type, name]) => make("creator", name, { type })),
+    ...others.map(name => make("creator", name)), ...rights.map(line => make("rights", line)));
+  let misc = child(ident, "miscellaneous");
+  if (footnotes.length) {
+    if (!misc) misc = ident.appendChild(xml.createElement("miscellaneous"));
+    misc.append(...footnotes.map(line => make("miscellaneous-field", line, { name: "footnote" })));
+  } else if (misc && !misc.children.length) misc.remove();
+  const partList = child(root, "part-list");
+  for (const [type, justify, text] of headerLines(title, subtitles, music, words, arranger, others)) {
+    const credit = make("credit", "", { page: "1" });
+    if (type) credit.append(make("credit-type", type));
+    credit.append(make("credit-words", text,
+      { justify, valign: "top", ...(type === "title" ? { "font-weight": "bold" } : {}) }));
+    root.insertBefore(credit, partList);
+  }
+
+  all("score-part").forEach((scorePart, k) => {
+    const [name, short] = $("d-parts").querySelectorAll(".part-row")[k].querySelectorAll("input");
+    let nameEl = child(scorePart, "part-name"), shortEl = child(scorePart, "part-abbreviation");
+    const changed = nameEl?.textContent !== name.value.trim();
+    if (!nameEl) nameEl = scorePart.insertBefore(xml.createElement("part-name"), scorePart.firstElementChild);
+    nameEl.textContent = name.value.trim();
+    if (changed) child(scorePart, "part-name-display")?.remove();
+    if (short.value.trim()) {
+      if (!shortEl) shortEl = scorePart.insertBefore(xml.createElement("part-abbreviation"), nameEl.nextElementSibling);
+      if (shortEl.textContent !== short.value.trim()) child(scorePart, "part-abbreviation-display")?.remove();
+      shortEl.textContent = short.value.trim();
+    } else if (shortEl) shortEl.remove();
+  });
+  markDirty();
+  render();
 }
 
 // ---- Save and downloads
@@ -328,6 +466,9 @@ async function loadEditor() {
   $("panel-text").addEventListener("input", updateCount);
   $("panel-apply").addEventListener("click", applyPanel);
   $("panel-close").addEventListener("click", () => { $("panel").hidden = true; });
+  $("details-view").addEventListener("click", openDetails);
+  $("details-apply").addEventListener("click", applyDetails);
+  $("details-close").addEventListener("click", () => { $("details").hidden = true; });
   let resize;
   addEventListener("resize", () => {
     clearTimeout(resize);

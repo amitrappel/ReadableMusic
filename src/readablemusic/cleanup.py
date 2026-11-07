@@ -1,5 +1,6 @@
 """Page clean-up before OMR."""
 
+from collections.abc import Sequence
 from typing import NamedTuple
 
 import numpy as np
@@ -13,7 +14,7 @@ MAX_BELOW = 10.0  # interlines below the last staff line for low notes and sever
 MIN_MATCHES_SHARE = 0.2  # staff matches needed, as a share of the sampled columns
 
 
-def blank_outside_music(img: Image.Image, interline: float) -> Image.Image:
+def blank_outside_music(img: Image.Image, interline: float, keep: Sequence[tuple] = ()) -> Image.Image:
     """Whiten titles, headers and footers, which Audiveris otherwise reads as lyrics.
 
     From the first and the last staff line, walk away from the music to the first band
@@ -23,9 +24,13 @@ def blank_outside_music(img: Image.Image, interline: float) -> Image.Image:
     band = music_band(img, interline)
     if band is None:
         return img
-    out = np.asarray(img.convert("L")).copy()
+    original = np.asarray(img.convert("L"))
+    out = original.copy()
     out[:max(band.top, 0)] = 255
     out[band.bottom:] = 255
+    for x0, y0, x1, y1 in keep:  # text known to belong to the music
+        rows, columns = slice(max(round(y0), 0), max(round(y1), 0)), slice(max(round(x0), 0), max(round(x1), 0))
+        out[rows, columns] = original[rows, columns]
     return Image.fromarray(out)
 
 
@@ -87,3 +92,13 @@ def _gap(empty: np.ndarray, start: int, step: int, gap: int) -> int:
             return y - step * (gap - 1)
         y += step
     return 0 if step < 0 else len(empty)
+
+
+def whiten(img: Image.Image, boxes: list[tuple[float, float, float, float]]) -> Image.Image:
+    """Whiten boxes given in pixels as (x0, y0, x1, y1)."""
+    if not boxes:
+        return img
+    out = np.asarray(img.convert("L")).copy()
+    for x0, y0, x1, y1 in boxes:
+        out[max(round(y0), 0):max(round(y1), 0), max(round(x0), 0):max(round(x1), 0)] = 255
+    return Image.fromarray(out)
