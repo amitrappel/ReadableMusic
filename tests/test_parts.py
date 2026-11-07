@@ -1,6 +1,6 @@
 import music21 as m21
 
-from readablemusic.parts import Voice, align, name_key, standardize_names, voice_type
+from readablemusic.parts import Sound, Voice, align, name_key, standardize_names, voice_type
 
 
 def voices(*names):
@@ -150,3 +150,32 @@ def test_a_role_is_capitalized():
     part = _part(_voice("solo"), "C4")
     standardize_names(m21.stream.Score([part]))
     assert part.partName == "Solo"
+
+
+def test_clef_and_pitch_align_unnamed_staves_under_an_extra_solo():
+    sounds = {"solo": Sound(("G", 0), 72), "s": Sound(("G", 0), 67), "a": Sound(("G", 0), 62),
+              "t": Sound(("G", -1), 57), "b": Sound(("F", 0), 48)}
+    voices = []
+    for sound in sounds.values():
+        v = Voice()
+        v.names["Voice"] += 1
+        v.add_sound(sound)
+        voices.append(v)
+    staves = [sounds[k] for k in ("s", "a", "t", "b")]
+    assert align(["Voice"] * 4, voices, staves) == [1, 2, 3, 4]
+
+
+def test_four_unnamed_staves_under_a_solo_are_satb():
+    score = m21.stream.Score([_part(_voice("solo"), "A4"), _part(_voice("Voice"), "A4"), _part(_voice("Voice"), "F4"),
+                              _part(_voice("Voice"), "A4"), _part(_voice("Voice"), "D3")])
+    standardize_names(score)
+    assert [p.partName for p in score.parts] == ["Solo", "Soprano", "Alto", "Tenor", "Bass"]
+
+
+def test_a_voice_without_a_clef_does_not_take_a_staff_from_one_that_matches():
+    bass, drums = Voice(), Voice()
+    bass.names["Bass"] += 1
+    bass.add_sound(Sound(("F", 0), 45))
+    drums.names["Drumset"] += 1
+    assert align(["Voice"], [bass, drums], [Sound(("F", 0), 41)]) == [0]
+

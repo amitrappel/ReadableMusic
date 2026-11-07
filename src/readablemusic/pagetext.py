@@ -193,7 +193,7 @@ def _classify(page_runs: list[Run], page: int, bounds: Bounds, width: float) -> 
                 add(*labels)
             else:
                 offset = run.centre / width - 0.5
-                add("subtitle" if abs(offset) < CENTRE else "composer" if offset > 0 else "creator")
+                add("subtitle" if abs(offset) < CENTRE else "creator")  # the page does not say what they did
         elif below:
             if text.startswith("*"):
                 add("note")

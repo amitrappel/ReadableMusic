@@ -57,15 +57,14 @@ saved recognition output, with one full run (Irish Blessing).
 
 - **Scans** have no credits and keep guessed names. Dr. Doolittle comes out as `Soprano,
   Alto`, `Soprano`, `Baritone` where the page says `S. A.`, `T.`, `B.`.
-- **ניגע אל החלום:** two systems (m26-36) have a fifth staff, a solo. The merge aligns those
-  systems from the top, so there each voice slides down one part, and the tenor lands in a
-  bass-clef part. The top part is then named `Solo` though it is mostly the soprano, and
-  the others `Alto`, `Tenor`, `Baritone`, `Bass`. Its PDF also loses final letters in the
-  credits.
+- **ניגע אל החלום:** its PDF loses final letters in the credits. (Its solo staff, on two
+  systems only, used to push every voice down a part. Clef and pitch now align such
+  systems when names say nothing.)
 - **Somethin' Stupid:** the octave-treble clefs are read as plain treble, so the two
   voices are named Soprano and sound an octave high.
 - **Michtav le-achi:** a solo staff with no label is a guessed `Tenor`.
 - **אתה הצבת:** the handwritten treble clef is read as a bass clef in places, and the
   pitches there are wrong.
-- **Unlabeled credits** follow the usual layout (a name on the right is the composer),
-  which Somethin' Stupid does not follow: `Music: Billy Strange`.
+
+Unlabeled names in the header are now printed as they are, with no role: a name on the
+right was assumed to be the composer, which gave `Music: Billy Strange` on Somethin' Stupid.

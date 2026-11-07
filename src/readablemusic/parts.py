@@ -5,23 +5,38 @@ match exactly. With hidden empty staves and OCR noise ("B l", "Bl", "B1") a 9-vo
 can come out as 40+ parts, each hidden in most systems. Here systems that show every
 staff are matched by position, whatever their names (a score may name the singers on the
 first system and the voices after it); the other systems' visible staves are aligned, in
-order, to the voices using a fuzzy match against all the names seen so far.
+order, to the voices using a fuzzy match against all the names seen so far, and their clef
+and pitch, which decide when the names say nothing.
 """
 
 import copy
 import re
+import statistics
 from collections import Counter
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import music21 as m21
 
 UNNAMED = "Voice"  # Audiveris's name for a staff whose name it could not read
+CLEF_MISFIT = 1.5  # penalty for aligning a staff to a voice in another clef
+OCTAVE_MISFIT = 0.5  # the same for a treble staff against an octave-down treble voice
+PITCH_MISFIT = 24  # semitones from a voice's usual pitch that cost as much as a neutral name gives
+GAP_MISFIT = 0.3  # penalty for skipping a voice between two staves: an extra solo sits outside the choir
+
+
+class Sound(NamedTuple):
+    """What a staff of one system looks like, whatever it is called."""
+    clef: tuple[str, int] | None = None
+    middle: float | None = None
 
 
 @dataclass
 class Voice:
     names: Counter = field(default_factory=Counter)
     first: str = UNNAMED  # name on the first system, where scores print the full name
+    clefs: Counter = field(default_factory=Counter)
+    middles: list[float] = field(default_factory=list)  # middle pitch of each system
 
     @property
     def name(self) -> str:
@@ -39,6 +54,24 @@ class Voice:
     def similarity(self, staff: str) -> float:
         named = [n for n in self.names if name_key(n)]
         return max((similarity(staff, n) for n in named), default=similarity(staff, UNNAMED))
+
+    def add_sound(self, sound: Sound) -> None:
+        if sound.clef:
+            self.clefs[sound.clef] += 1
+        if sound.middle is not None:
+            self.middles.append(sound.middle)
+
+    def fit(self, sound: Sound) -> float:
+        """How far a staff's clef and pitch are from this voice's: 0 at best, always small."""
+        score = 0.0
+        if sound.clef and self.clefs:
+            sign, octave = self.clefs.most_common(1)[0][0]
+            score -= CLEF_MISFIT if sign != sound.clef[0] else OCTAVE_MISFIT if octave != sound.clef[1] else 0
+        elif sound.clef:
+            score -= OCTAVE_MISFIT  # no clef on record must not beat a clef that matches
+        if sound.middle is not None and self.middles:
+            score -= abs(sound.middle - statistics.median(self.middles)) / PITCH_MISFIT
+        return score
 
 
 def name_key(name: str) -> str:
@@ -74,9 +107,10 @@ def similarity(a: str, b: str) -> float:
     return -10.0
 
 
-def align(staves: list[str], voices: list[Voice]) -> list[int | None]:
+def align(staves: list[str], voices: list[Voice], sounds: list[Sound] | None = None) -> list[int | None]:
     """Map each staff (top to bottom) to a voice index, preserving order. None = no match."""
     n, m = len(staves), len(voices)
+    sounds = sounds or [Sound()] * n
     neg = float("-inf")
     best = [[neg] * (m + 1) for _ in range(n + 1)]
     move = [[None] * (m + 1) for _ in range(n + 1)]
@@ -86,8 +120,10 @@ def align(staves: list[str], voices: list[Voice]) -> list[int | None]:
         for j in range(m + 1):
             options = [(best[i - 1][j] - 5.0, "new")]  # staff that matches no voice
             if j:
-                options.append((best[i][j - 1], "skip"))  # voice hidden in this system
-                options.append((best[i - 1][j - 1] + voices[j - 1].similarity(staves[i - 1]), "match"))
+                gap = GAP_MISFIT if 0 < i < n else 0
+                options.append((best[i][j - 1] - gap, "skip"))  # voice hidden in this system
+                score = voices[j - 1].similarity(staves[i - 1]) + voices[j - 1].fit(sounds[i - 1])
+                options.append((best[i - 1][j - 1] + score, "match"))
             best[i][j], move[i][j] = max(options, key=lambda o: o[0])
     result: list[int | None] = [None] * n
     i, j = n, m
@@ -116,6 +152,15 @@ def _is_hidden(measure: m21.stream.Measure) -> bool:
     return any(x.hidden for x in measure.getElementsByClass(m21.layout.StaffLayout))
 
 
+def _sound(measures: list[m21.stream.Measure]) -> Sound:
+    """The clef and middle pitch of one staff across the measures of a system."""
+    clef = measures[0].getContextByClass(m21.clef.Clef)  # often printed only where the part begins
+    pitches = [p.midi for m in measures for n in m.recurse().notes
+               if not isinstance(n, m21.harmony.Harmony) for p in n.pitches]
+    return Sound((clef.sign, clef.octaveChange or 0) if clef else None,
+                 statistics.median(pitches) if pitches else None)
+
+
 def _is_percussion(part: m21.stream.Part) -> bool:
     return any(isinstance(c, m21.clef.PercussionClef) for c in part.recurse().getElementsByClass(m21.clef.Clef))
 
@@ -135,7 +180,9 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
     mapping: dict[int, dict[int, int]] = {}
     for s in order:
         names = [str(parts[k].partName or UNNAMED) for k in systems[s]]
-        matched = list(range(len(names))) if len(names) == len(voices) else align(names, voices)
+        a, b = bounds[s]
+        sounds = [_sound(measures[k][a:b]) for k in systems[s]]
+        matched = list(range(len(names))) if len(names) == len(voices) else align(names, voices, sounds)
         for pos, (k, v) in enumerate(zip(systems[s], matched)):
             if v is None:
                 # Insert a new voice after the voice matched just above, keeping vertical order.
@@ -150,6 +197,7 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
                 voices.insert(v, Voice())
                 matched[pos] = v
             voices[v].names[names[pos]] += 1
+            voices[v].add_sound(sounds[pos])
             if s == 0:
                 voices[v].first = names[pos]
         mapping[s] = dict(zip(systems[s], matched))
@@ -258,8 +306,10 @@ def standardize_names(score: m21.stream.Score, stacked: dict[str, str] | None = 
     read = [_named_type(p.source_voice, stacked or {}) for p in parts]
     roles = [not kind and _keeps_role(p) for p, kind in zip(parts, read)]
     kinds = [None if role else kind or _voice_from_range(p) for p, kind, role in zip(parts, read, roles)]
-    if len(parts) == 4 and not any(read) and not any(roles) and not any("," in k[0] for k in kinds):
-        kinds = list(SATB)
+    open_parts = [i for i, role in enumerate(roles) if not role]  # a solo beside them changes nothing
+    if len(open_parts) == 4 and not any(read) and not any("," in kinds[i][0] for i in open_parts):
+        for i, kind in zip(open_parts, SATB):
+            kinds[i] = kind
     if len(parts) == 1 and not read[0] and not roles[0]:  # a lone melody: nothing says which voice
         kinds = [(UNNAMED, None, "")]
     counts =Counter(k[0] for k in kinds if k and not k[2])
