@@ -10,6 +10,8 @@ from PIL import Image
 
 REPO_TOOLS = Path(__file__).resolve().parents[2] / "tools"
 SECONDS_PER_PAGE = 180  # normally 25-50 s; Audiveris can hang on odd pages
+# Left unset, Tesseract misses whole lines of lyrics: 24 syllables of 62 on Irish Blessing.
+OCR_RESOLUTION = "org.audiveris.omr.text.tesseract.TesseractOrder.typicalImageResolution=300"
 
 
 class AudiverisError(RuntimeError):
@@ -38,7 +40,7 @@ def transcribe(image: Path, out_dir: Path) -> list[Path]:
     """
     with Image.open(image) as img:
         timeout = 60 + SECONDS_PER_PAGE * getattr(img, "n_frames", 1)
-    return _run(["-transcribe", "-export"], image, out_dir, timeout, "audiveris.log")
+    return _run(["-transcribe", "-export", "-option", OCR_RESOLUTION], image, out_dir, timeout, "audiveris.log")
 
 
 def export(omr: Path, out_dir: Path) -> list[Path]:

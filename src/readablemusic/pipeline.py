@@ -7,7 +7,7 @@ import pypdfium2 as pdfium
 
 from . import audiveris
 from .cleanup import blank_outside_music, music_band, whiten
-from .lyrics import clean_lyrics
+from .lyrics import clean_lyrics, drop_stray_lines
 from .ocr import read_scan_text, repair_hebrew_credits
 from .pages import load_pages, save_tiff
 from .pagetext import CREDITS, Bounds, Item, drop_repeated_text, read_page_text, stacked_names, write_page_text
@@ -81,7 +81,7 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
     stacked = stacked_names(source) if text_pdf else {}
     results = []
     for n, mxl in enumerate(mxls):
-        score = merge_parts(m21.converter.parse(mxl))
+        score = merge_parts(drop_stray_lines(m21.converter.parse(mxl)))
         footnotes = standardize_names(score, stacked)
         score = drop_repeated_text(tidy(clean_lyrics(score)), items)
         dest = out_dir / mxl.with_suffix(".musicxml").name
