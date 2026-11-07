@@ -48,4 +48,5 @@ Run with `uv run readablemusic-web` and open http://127.0.0.1:8000.
 - Part names are often the placeholder "Voice" when OCR missed the staff labels.
 - The edit box can cover the staff below the clicked note.
 - The line editor cannot add syllables that OCR missed; add those by clicking the note.
-- No protection against abuse yet (rate limits, CAPTCHA); needed before going public.
+- No CAPTCHA yet. Size, page and rate limits came with hosting; see
+  [deployment.md](deployment.md).

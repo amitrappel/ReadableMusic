@@ -1,8 +1,10 @@
 # Deployment
 
-The app runs on [Railway](https://railway.com) (Hobby plan) from the `Dockerfile`.
-Railway rebuilds and redeploys on each push to the deployed branch. Deploying only what
-is pushed also keeps the AGPL promise on the upload page: the source link shows what runs.
+The app runs on [Railway](https://railway.com) (Hobby plan) from the `Dockerfile`, at
+https://readablemusic-production.up.railway.app. Railway rebuilds and redeploys on each
+push to `master`, and a redeploy loses running jobs and results (see below). Deploying
+only what is pushed also keeps the AGPL promise on the upload page: the source link shows
+what runs.
 
 ## Setting it up
 
@@ -11,7 +13,7 @@ is pushed also keeps the AGPL promise on the upload page: the source link shows 
 2. New Project, Deploy from GitHub repo, `amitrappel/ReadableMusic`. Railway finds the
    `Dockerfile` by itself.
 3. In the service's Variables, add `PORT` = `8000`. Then in its Settings:
-   - Source: choose the branch to deploy.
+   - Source: branch `master`.
    - Networking: Generate Domain, target port 8000.
    - Deploy: health check path `/`. Leave Serverless off (see below).
    - Resource limits: memory 4 GB.
@@ -59,3 +61,8 @@ Set in `src/readablemusic/web/__init__.py`:
 - Inputs are deleted when a job succeeds, and everything else after 24 hours.
 
 There is no CAPTCHA yet. Add one if the limits above turn out not to be enough.
+
+Checked on Railway (2026-11-07): a 2-page score converted in 100 s and a lyric edit saved;
+oversized, unreadable, too long and unsized uploads were refused; the 11th job in an hour
+was refused even with a different forged `X-Real-IP` on each upload. The count is kept in
+memory, so restarting the service clears it.

@@ -11,7 +11,9 @@ RUN apt-get update \
  && rm /tmp/audiveris.deb \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir /opt/tessdata \
- && curl -fsSL -o /opt/tessdata/eng.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata
+ && for lang in eng heb; do \
+      curl -fsSL -o /opt/tessdata/$lang.traineddata https://github.com/tesseract-ocr/tessdata/raw/main/$lang.traineddata; \
+    done
 
 COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /usr/local/bin/uv
 
