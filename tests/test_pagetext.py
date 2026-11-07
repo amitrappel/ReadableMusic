@@ -2,7 +2,8 @@ import music21 as m21
 from reportlab.pdfgen import canvas
 
 from readablemusic.engrave import to_pdf
-from readablemusic.pagetext import (Bounds, Item, drop_repeated_text, header_lines, read_page_text,
+from readablemusic.ocr import restores_letters
+from readablemusic.pagetext import (Bounds, Item, Line, drop_repeated_text, header_lines, read_page_text, sort_text,
                                     write_page_text)
 
 BOUNDS = Bounds(top=130, first=150, last=700, bottom=760)  # on a page 800 pt high
@@ -72,3 +73,44 @@ def test_output_has_standard_header_and_footnotes(tmp_path):
     assert "Original part names: Soprano – Shani" in xml
     assert to_pdf(dest, tmp_path / "score.pdf") == 1
     m21.converter.parse(dest)  # still valid enough to read
+
+
+PAGE = Bounds(100, 120, 700, 720)
+
+
+def _kinds(*lines):
+    items = sort_text([[Line(text, box) for text, box in lines]], [PAGE], [600])
+    return [(i.kind, i.name) for i in items]
+
+
+def test_a_label_alone_takes_the_name_beside_it():
+    assert _kinds(("Arr.", (400, 40, 430, 52)), ("Tzvi Sherf", (440, 40, 520, 52))) == [("arranger", "Tzvi Sherf")]
+
+
+def test_a_label_alone_takes_the_name_under_it():
+    kinds = _kinds(("Arrangement by", (20, 40, 140, 52)), ("Words and Music by", (400, 40, 560, 52)),
+                   ("Deke Sharon", (20, 56, 120, 68)), ("John Lennon", (400, 56, 500, 68)))
+    assert sorted(kinds) == [("arranger", "Deke Sharon"), ("composer", "John Lennon"), ("lyricist", "John Lennon")]
+
+
+def test_a_spoiled_label_is_still_a_label():
+    kinds = _kinds(("Lyrics & wmusic", (300, 40, 420, 52)), ("Shalom Chanoch", (430, 40, 560, 52)))
+    assert sorted(kinds) == [("composer", "Shalom Chanoch"), ("lyricist", "Shalom Chanoch")]
+
+
+def test_hebrew_words_and_music_gives_both_roles_in_either_spelling():
+    for label in ("מילים ולחן", "מלים ולחן"):
+        kinds = _kinds((f"{label}: שלום חנוך", (300, 40, 500, 52)))
+        assert sorted(kinds) == [("composer", "שלום חנוך"), ("lyricist", "שלום חנוך")]
+
+
+def test_a_verse_above_the_music_is_a_note_not_a_credit():
+    assert _kinds(("Maria aiparthene kosmu pantos Kiria, Animfevte.", (100, 60, 500, 72))) == \
+        [("note", "Maria aiparthene kosmu pantos Kiria, Animfevte.")]
+
+
+def test_a_reading_restores_letters_only_if_it_keeps_all_the_others():
+    assert restores_letters("ניגע אל החלו", "ניגע אל החלום")
+    assert restores_letters("עיבוד: שר צבי :", "עיבוד: צבי שרף")  # words out of order in the PDF
+    assert not restores_letters("ניגע אל החלום", "ניגע אל החלום")
+    assert not restores_letters("ניגע אל החלו", "ניגע אל החלם")

@@ -8,6 +8,7 @@ import pypdfium2 as pdfium
 from . import audiveris
 from .cleanup import blank_outside_music, music_band, whiten
 from .lyrics import clean_lyrics
+from .ocr import read_scan_text, repair_hebrew_credits
 from .pages import load_pages, save_tiff
 from .pagetext import CREDITS, Bounds, Item, drop_repeated_text, read_page_text, stacked_names, write_page_text
 from .parts import merge_parts, standardize_names
@@ -41,10 +42,16 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
     source = inputs[0]
     text_pdf = len(inputs) == 1 and source.suffix.lower() == ".pdf" and has_text(source)
     items = _read_text(source, pages, interline) if text_pdf else []
+    # A PDF can hold text that is no use here: music symbols, or none of the credits.
+    scanned = not any(i.kind in CREDITS for i in items)
+    points = [pdfium.PdfDocument(source)[n].get_width() / page.width for n, page in enumerate(pages)] \
+        if not scanned else [1.0] * len(pages)
+    if scanned:
+        items = read_scan_text(pages, [music_band(page, interline) for page in pages])
+    elif (repaired := repair_hebrew_credits(items, pages, points)):
+        log(f"Restored letters missing from the PDF's text in {repaired} credit(s)")
     if items:
         log("Text on the page: " + "; ".join(f"{i.kind}: {i.text}" for i in items if i.kind in CREDITS))
-    points = [pdfium.PdfDocument(source)[n].get_width() / page.width for n, page in enumerate(pages)] if text_pdf \
-        else [1.0] * len(pages)
 
     def boxes(n: int, music: bool) -> list[tuple]:
         return [tuple(v / points[n] for v in i.box) for i in items if i.page == n and (i.kind == "music") == music]

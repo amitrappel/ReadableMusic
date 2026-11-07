@@ -10,7 +10,7 @@ Every line of text in a PDF's text layer is sorted by where it is and what it sa
 
 The credits, footnotes and furniture are whitened on the page, so that recognition sees
 only music, and the output prints them in one standard form, wherever the original had
-them. Scans have no text layer yet.
+them. Scans have no text layer: ocr.py reads their lines, which are sorted the same way.
 """
 
 import difflib
@@ -27,8 +27,8 @@ import pypdfium2 as pdfium
 from .textlayer import Char, text_chars
 
 LABELS = {
-    "composer": r"\b(music|composed|composer|melody)\b|לחן|מוזיקה",
-    "lyricist": r"\b(words|lyrics|text|poem)\b|מילים|תמליל",
+    "composer": r"music\b|\b(composed|composer|melody)\b|לחן|מוזיקה",  # OCR can stick a letter to 'music'
+    "lyricist": r"\b(words|lyrics|text|poem)\b|מי?לים|תמליל",
     "arranger": r"\b(arr|arranged|arrangement|arranger)\b|עיבוד|עיבד|מעבד",
 }
 CREDITS = ("title", "subtitle", "composer", "lyricist", "arranger", "creator")
@@ -41,6 +41,8 @@ CENTRE = 0.2  # share of the page width around the middle that counts as centred
 SIMILAR = 0.7  # difflib ratio above which a text direction repeats text taken off the page
 PAD = 1.0  # points around a line of text when it is whitened
 MARGIN = 0.15  # share of the page width at the left that holds part names
+PROSE_WORDS = 5  # an unlabeled line this long that ends like a sentence is not a credit
+BELOW_LABEL = 2.5  # font heights under a label alone where its name may be
 
 
 class Bounds(NamedTuple):
@@ -62,11 +64,12 @@ class Item:
     @property
     def name(self) -> str:
         """The name without its label: 'Music by: ABBA' -> 'ABBA'."""
+        if self.kind not in LABELS:
+            return self.text  # 'Edited by Harry Boulton' says what it says
         m = re.search(r"(?:\bby\b\s*:?|:)\s*(.+)$", self.text, re.I)
         if m:
             return m.group(1).strip()
-        label = LABELS.get(self.kind)
-        return re.sub(rf"^\W*({label})\W*", "", self.text, flags=re.I).strip() if label else self.text
+        return re.sub(rf"^\W*({LABELS[self.kind]})\W*", "", self.text, flags=re.I).strip()
 
 
 def _gap(a: Char, b: Char) -> float:
@@ -112,6 +115,25 @@ class Run:
         return (self.box[0] + self.box[2]) / 2
 
 
+@dataclass
+class Line:
+    """A line of text with no letters behind it: read by OCR, or joined from two."""
+    text: str
+    box: tuple[float, float, float, float]
+
+    @property
+    def size(self) -> float:
+        return self.box[3] - self.box[1]
+
+    @property
+    def y(self) -> float:
+        return (self.box[1] + self.box[3]) / 2
+
+    @property
+    def centre(self) -> float:
+        return (self.box[0] + self.box[2]) / 2
+
+
 def runs(chars: list[Char]) -> list[Run]:
     out: list[Run] = []
     for ch in chars:
@@ -151,12 +173,46 @@ def stacked_names(pdf_path: Path) -> dict[str, str]:
 
 
 def read_page_text(pdf_path: Path, bounds: list[Bounds | None]) -> list[Item]:
-    """Sort the text of each page; pages with None in bounds hold no music and are skipped."""
+    """Sort the text layer of each page; pages with None in bounds hold no music and are skipped."""
     pdf = pdfium.PdfDocument(pdf_path)
+    lines = [runs(text_chars(pdf[n])) if b is not None else [] for n, b in enumerate(bounds)]
+    return sort_text(lines, bounds, [pdf[n].get_width() for n in range(len(bounds))])
+
+
+def _label_alone(text: str) -> bool:
+    """'Arrangement by', 'Arr.', and 'Lyrics & wmusic' with a word OCR spoiled: no name follows."""
+    if not any(re.search(label, text, re.I) for label in LABELS.values()):
+        return False
+    rest = re.sub("|".join(LABELS.values()) + r"|\bby\b|\band\b", "", text, flags=re.I)
+    return all(w.islower() for w in re.findall(r"\w+", rest))
+
+
+def _join_labels(page_lines: list) -> list:
+    """Give a label alone the name beside it or under it, as OCR reads them as separate lines."""
+    lines = list(page_lines)
+    for label in [line for line in lines if _label_alone(line.text)]:
+        def beside(line) -> bool:
+            return abs(line.y - label.y) < label.size / 2 and line.box[0] > label.box[0]
+
+        def under(line) -> bool:
+            return (0 < line.y - label.y < BELOW_LABEL * label.size
+                    and line.box[0] < label.box[2] and label.box[0] < line.box[2])
+
+        others = [line for line in lines if line is not label and not _label_alone(line.text)]
+        name = min(filter(beside, others), key=lambda line: line.box[0], default=None) \
+            or min(filter(under, others), key=lambda line: line.y, default=None)
+        if name:
+            joined = Line(f"{label.text}: {name.text}", _union(label.box, name.box))
+            lines = [joined if line is label else line for line in lines if line is not name]
+    return lines
+
+
+def sort_text(lines: list[list], bounds: list[Bounds | None], widths: list[float]) -> list[Item]:
+    """Sort the lines of each page, all of them in the units of its bounds and width."""
     items: list[Item] = []
     for n, page_bounds in enumerate(bounds):
         if page_bounds is not None:
-            items += _classify(runs(text_chars(pdf[n])), n, page_bounds, pdf[n].get_width())
+            items += _classify(_join_labels(lines[n]), n, page_bounds, widths[n])
     titles = [i for i in items if i.kind == "subtitle"]
     if titles:
         max(titles, key=lambda i: i.size).kind = "title"
@@ -191,6 +247,8 @@ def _classify(page_runs: list[Run], page: int, bounds: Bounds, width: float) -> 
                 items[-1].box = _union(items[-1].box, run.box)
             elif labels:
                 add(*labels)
+            elif len(text.split()) >= PROSE_WORDS and text.endswith((".", ",", ";")):
+                add("note")  # a verse printed above the music
             else:
                 offset = run.centre / width - 0.5
                 add("subtitle" if abs(offset) < CENTRE else "creator")  # the page does not say what they did
