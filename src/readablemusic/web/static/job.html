@@ -13,6 +13,7 @@
   <span id="status">Loading…</span>
   <span class="spacer"></span>
   <span id="tools" hidden>
+    <button id="details-view" type="button">Edit title and parts</button>
     <button id="text-view" type="button">Edit a line as text</button>
     <button id="save" type="button" disabled>Save changes</button>
     <a id="get-xml" class="button" download>MusicXML</a>
@@ -41,6 +42,22 @@
     missing one, click its note in the score.</p>
   <button id="panel-apply" type="button">Apply</button>
   <button id="panel-close" type="button">Close</button>
+</aside>
+
+<aside id="details" class="panel" hidden>
+  <h2>Title, credits and parts</h2>
+  <label>Title <input id="d-title" dir="auto"></label>
+  <label>Subtitle <textarea id="d-subtitle" dir="auto" rows="2"></textarea></label>
+  <label>Music <input id="d-composer" dir="auto"></label>
+  <label>Words <input id="d-lyricist" dir="auto"></label>
+  <label>Arrangement <input id="d-arranger" dir="auto"></label>
+  <label>Other names <textarea id="d-others" dir="auto" rows="2"></textarea></label>
+  <div id="d-parts"></div>
+  <label>Footnotes <textarea id="d-footnotes" dir="auto" rows="3"></textarea></label>
+  <label>Copyright <textarea id="d-rights" dir="auto" rows="2"></textarea></label>
+  <p class="small">In the larger boxes, each line is printed as its own line.</p>
+  <button id="details-apply" type="button">Apply</button>
+  <button id="details-close" type="button">Close</button>
 </aside>
 
 <script src="https://cdn.jsdelivr.net/npm/verovio@6.3.0/dist/verovio-toolkit-wasm.js"></script>
