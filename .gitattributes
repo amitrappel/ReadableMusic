@@ -1,0 +1,3 @@
+# Bash fails on Windows line endings ($'\r': command not found), and Git on Windows
+# converts to them on checkout unless told otherwise.
+*.sh text eol=lf

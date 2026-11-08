@@ -94,7 +94,9 @@ scripts/measure_docker.sh readablemusic 2 4g score.pdf ...           # time and 
 
 In Git Bash, `docker` needs `MSYS_NO_PATHCONV=1` for paths inside the container, such as
 `/sys/fs/cgroup`, but `curl` must not get it, or it cannot find local files.
-`measure_docker.sh` sets it for `docker` only.
+`measure_docker.sh` sets it for `docker` only. `.gitattributes` keeps `.sh` files in Unix
+line endings on checkout: with `core.autocrlf` on, Git on Windows would otherwise give them
+Windows line endings, and Bash fails on those with `$'\r': command not found`.
 
 Checked after the merge with round 5 (2026-11-07), against Windows results:
 
