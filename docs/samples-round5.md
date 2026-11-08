@@ -41,3 +41,25 @@ Clefs were reread in 13 stretches: All My Loving (5), Dr. Doolittle (6), נוע�
   Doolittle's title reads `Doglittle`.
 - **Dr. Doolittle names:** `Soprano, Alto`, `Soprano`, `Baritone` where the page says
   `S. A.`, `T.`, `B.`; fixable in the browser.
+
+## Next steps
+
+1. **Clef per part in the browser.** Add a clef choice (treble, octave treble, bass, …) to
+   each part row of the "Edit title and parts" panel. Changing it rereads the part's notes
+   on the same staff positions, as `readablemusic.clefs.moved` does in Python. This fixes
+   אתה הצבת (bass → treble) and Dr. Doolittle's tenor (treble → octave treble).
+2. **Hosting.** The `hosting` branch's Dockerfile must fetch `heb.traineddata` (and
+   `eng.traineddata`) into `tools/tessdata`, as `scripts/fetch_tools.py` does locally;
+   without it credits on scans are not read. Merge `master` into `hosting` after that.
+3. **Smaller fixes:** credits on אתה הצבת, Siyahamba's footnote fragment, the title
+   `Doglittle`.
+4. **Lyric coverage** below 75% of letters remains on Michtav, ניגע and Hurricane; measure
+   again with this round's OCR resolution before choosing what to try.
+
+## How this round was checked
+
+- `uv run pytest -q` (43 tests).
+- `uv run python eval/run.py`: the Bach evaluation above.
+- `uv run python eval/samples.py [name ...]` into `work/samples` (delete a sample's PDF to
+  rerun it). `work/samples-round4` holds the run before this round for comparison.
+- The local server must be restarted to pick up pipeline changes.

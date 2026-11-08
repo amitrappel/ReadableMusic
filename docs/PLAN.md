@@ -22,6 +22,8 @@
 - Round 1 on real samples: see [samples-round1.md](samples-round1.md).
 - Round 2 (parts named differently per system, credits): see [samples-round2.md](samples-round2.md).
 - Round 3 (text first, standard output): see [samples-round3.md](samples-round3.md).
+- Round 5 (OCR resolution, stray lyric lines, misread clefs, browser editing of title and
+  parts): see [samples-round5.md](samples-round5.md), which ends with the next steps.
 - Phase 4 (deployment) is live on Railway from `master`; see [deployment.md](deployment.md).
 
 ## Working rule
