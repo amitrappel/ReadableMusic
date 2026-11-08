@@ -27,6 +27,9 @@ CREDIT_TEXT = re.compile(
     r'text-anchor="(\w+)">\s*<tspan [^>]*class="text">\s*<tspan font-size="([\d.]+)px">([^<]*)</tspan>'
     r'\s*</tspan>\s*</tspan>\s*</text>')
 TITLE_SCALE = 1.5  # Verovio prints all credits at one size; the title is the bold one
+STAFF_GAP = 16  # Verovio units (half a staff space): least space between staves of a system
+SYSTEM_GAP = 16  # least space between systems
+LYRIC_WORD_SPACE = 2.0
 
 TEXT_FONT = "DavidLibre"  # has both Latin and Hebrew letters
 FOOT_FONT = "DavidLibre-Regular"
@@ -97,6 +100,12 @@ def to_pdf(musicxml: Path, dest: Path, staff_mm: float = 5.0) -> int:
         "breaks": "auto",  # reflow instead of copying the scan's system breaks
         "header": "encoded",  # the credits only: the Windows build garbles its page-number header
         "footer": "encoded",
+        # Roomier than Verovio's defaults (12, 12, 4, 1.2), which crowd lyrics against the next staff.
+        "spacingStaff": STAFF_GAP,
+        "spacingBracketGroup": STAFF_GAP,
+        "spacingBraceGroup": STAFF_GAP,
+        "spacingSystem": SYSTEM_GAP,
+        "lyricWordSpace": LYRIC_WORD_SPACE,
     })
     # loadData, not loadFile: Verovio cannot open non-ASCII paths on Windows
     if not tk.loadData(xml):
