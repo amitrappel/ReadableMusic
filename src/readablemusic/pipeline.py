@@ -11,7 +11,8 @@ from .cleanup import blank_outside_music, music_band, whiten
 from .lyrics import clean_lyrics, drop_stray_lines
 from .ocr import read_scan_text, repair_hebrew_credits
 from .pages import load_pages, save_tiff
-from .pagetext import CREDITS, Bounds, Item, drop_repeated_text, read_page_text, stacked_names, write_page_text
+from .pagetext import (CREDITS, Bounds, Item, add_directions, drop_repeated_text, measure_places, read_page_text,
+                       stacked_names, write_page_text)
 from .parts import merge_parts, standardize_names
 from .scale import staff_evidence
 from .textlayer import fix_text, has_text
@@ -48,7 +49,9 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
     points = [pdfium.PdfDocument(source)[n].get_width() / page.width for n, page in enumerate(pages)] \
         if not scanned else [1.0] * len(pages)
     if scanned:
-        items = read_scan_text(pages, [music_band(page, interline) for page in pages])
+        # OCR just above a staff can read high notes as letters; whitening them would lose music.
+        items = [i for i in read_scan_text(pages, [music_band(page, interline) for page in pages])
+                 if i.kind != "direction"]
     elif (repaired := repair_hebrew_credits(items, pages, points)):
         log(f"Restored letters missing from the PDF's text in {repaired} credit(s)")
     if items:
@@ -82,11 +85,16 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
     stacked = stacked_names(source) if text_pdf else {}
     results = []
     for n, mxl in enumerate(mxls):
-        score = merge_parts(drop_stray_lines(m21.converter.parse(mxl)))
+        raw = m21.converter.parse(mxl)
+        # Only the first score is known to start on the first page.
+        places = measure_places(raw, interline) if n == 0 and len(pages) == len(support) else []
+        score = merge_parts(drop_stray_lines(raw))
         if (clefs := fix_clefs(score)):
             log(f"Reread {clefs} stretch(es) of music in the clef of the rest of their part")
         footnotes = standardize_names(score, stacked)
         score = drop_repeated_text(tidy(clean_lyrics(score)), items)
+        if (directions := add_directions(score, items, places, points)):
+            log(f"Printed {directions} direction(s) from above the staves")
         dest = out_dir / mxl.with_suffix(".musicxml").name
         score.write("musicxml", dest, makeNotation=False)  # Audiveris output is already notated
         write_page_text(dest, items if n == 0 else [], footnotes)

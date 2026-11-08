@@ -5,12 +5,15 @@ Every line of text in a PDF's text layer is sorted by where it is and what it sa
 - credits: title, subtitle, composer, lyricist, arranger, unlabeled names;
 - rights and notes, which become footnotes;
 - furniture: page numbers, running titles, dates, version stamps, which are dropped;
-- music: anything else (tempo marks, "Verse 2", lyrics). Among the staves it is not even
-  looked at; outside them it is returned, so that blanking the margins spares it.
+- directions: short text just above a page's first staff ("(swing)", "Moderato"), which
+  the output prints above the measure under it;
+- music: anything else ("Verse 2", lyrics). Among the staves it is not even looked at;
+  outside them it is returned, so that blanking the margins spares it.
 
-The credits, footnotes and furniture are whitened on the page, so that recognition sees
-only music, and the output prints them in one standard form, wherever the original had
-them. Scans have no text layer: ocr.py reads their lines, which are sorted the same way.
+The credits, footnotes, furniture and directions are whitened on the page, so that
+recognition sees only music, and the output prints them in one standard form, wherever the
+original had them. Scans have no text layer: ocr.py reads their lines, which are sorted
+the same way.
 """
 
 import difflib
@@ -43,6 +46,8 @@ PAD = 1.0  # points around a line of text when it is whitened
 MARGIN = 0.15  # share of the page width at the left that holds part names
 PROSE_WORDS = 5  # an unlabeled line this long that ends like a sentence is not a credit
 BELOW_LABEL = 2.5  # font heights under a label alone where its name may be
+DIRECTION_WORDS = 4  # longer text just above the first staff is not a tempo or style mark
+CHORD_SYMBOL = re.compile(r"[A-G][#b♯♭]?(m|maj|min|dim|aug|sus|add|M)?\d*(/[A-G][#b♯♭]?)?")
 
 
 class Bounds(NamedTuple):
@@ -252,6 +257,10 @@ def _classify(page_runs: list[Run], page: int, bounds: Bounds, width: float) -> 
             else:
                 offset = run.centre / width - 0.5
                 add("subtitle" if abs(offset) < CENTRE else "creator")  # the page does not say what they did
+        elif near_top:
+            words = text.split()
+            if len(words) <= DIRECTION_WORDS and not all(CHORD_SYMBOL.fullmatch(w) for w in words):
+                add("direction")  # '(swing)', 'Moderato': recognition can miss them
         elif below:
             if text.startswith("*"):
                 add("note")
@@ -340,6 +349,45 @@ def write_page_text(musicxml: Path, items: list[Item], footnotes: list[str] = ()
     if words:
         xml = xml.replace("<part-list>", "\n  ".join(words) + "\n  <part-list>", 1)
     musicxml.write_text(xml, encoding="utf-8")
+
+
+def measure_places(score: m21.stream.Score, interline: float) -> list[tuple[int, int, int, float, float]]:
+    """(measure number, page, system on the page, left, right) for each measure of the first
+    part, in page pixels, from the layout Audiveris exports: system margins from the page
+    edge, and widths, in tenths of an interline. Empty if the layout is missing."""
+    places: list[tuple[int, int, int, float, float]] = []
+    page = system = 0
+    x = 0.0
+    for m in score.parts[0].getElementsByClass(m21.stream.Measure):
+        if m.layoutWidth is None:
+            return []
+        new_page = any(p.isNew for p in m.getElementsByClass(m21.layout.PageLayout))
+        layouts = list(m.getElementsByClass(m21.layout.SystemLayout))
+        if not places or new_page or (layouts and layouts[0].isNew):
+            page, system = (page + 1, 0) if new_page else (page, system + 1 if places else 0)
+            x = (layouts[0].leftMargin or 0) * interline / 10 if layouts else 0.0
+        width = m.layoutWidth * interline / 10
+        places.append((m.number, page, system, x, x + width))
+        x += width
+    return places
+
+
+def add_directions(score: m21.stream.Score, items: list[Item], places: list, scale: list[float]) -> int:
+    """Print the directions taken off the pages above the top staff, in the measure under their
+    start in the first system of their page; scale[n] is item units per pixel on page n."""
+    added = 0
+    for item in (i for i in items if i.kind == "direction"):
+        first = [p for p in places if p[1] == item.page and p[2] == 0]
+        if not first:
+            continue
+        x = item.box[0] / scale[item.page]
+        number = next((n for n, _, _, _, right in first if x < right), first[-1][0])
+        if (measure := score.parts[0].measure(number)) is not None:
+            words = m21.expressions.TextExpression(item.text)
+            words.placement = "above"
+            measure.insert(0, words)
+            added += 1
+    return added
 
 
 def drop_repeated_text(score: m21.stream.Score, items: list[Item]) -> m21.stream.Score:

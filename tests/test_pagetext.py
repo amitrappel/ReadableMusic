@@ -3,8 +3,8 @@ from reportlab.pdfgen import canvas
 
 from readablemusic.engrave import to_pdf
 from readablemusic.ocr import restores_letters
-from readablemusic.pagetext import (Bounds, Item, Line, drop_repeated_text, header_lines, read_page_text, sort_text,
-                                    write_page_text)
+from readablemusic.pagetext import (Bounds, Item, Line, add_directions, drop_repeated_text, header_lines,
+                                    measure_places, read_page_text, sort_text, write_page_text)
 
 BOUNDS = Bounds(top=130, first=150, last=700, bottom=760)  # on a page 800 pt high
 
@@ -17,7 +17,8 @@ def make_pdf(path):
     c.drawString(40, 700, "Words and Music by: ABBA")
     c.drawRightString(560, 700, "arr. Ron Gang")
     c.drawRightString(560, 686, "and Shani Wahrman")
-    c.drawString(40, 662, "Swing")  # tempo mark just above the first staff: music
+    c.drawString(40, 662, "Swing")  # tempo mark just above the first staff
+    c.drawString(300, 662, "Am7 D7")  # chord symbols there: music
     c.drawString(100, 400, "oom pa")  # among the staves: music
     c.drawCentredString(300, 70, "© 2011")  # right under the music, in the area kept for recognition
     c.drawCentredString(300, 20, "Sung at the 2011 festival")
@@ -40,6 +41,7 @@ def test_text_is_sorted_by_place_and_content(tmp_path):
         ("composer", "Words and Music by: ABBA", 0),
         ("lyricist", "Words and Music by: ABBA", 0),
         ("arranger", "arr. Ron Gang and Shani Wahrman", 0),
+        ("direction", "Swing", 0),
         ("rights", "© 2011", 0),
         ("note", "Sung at the 2011 festival", 0),
         ("furniture", "Mamma Mia", 1),
@@ -114,3 +116,23 @@ def test_a_reading_restores_letters_only_if_it_keeps_all_the_others():
     assert restores_letters("עיבוד: שר צבי :", "עיבוד: צבי שרף")  # words out of order in the PDF
     assert not restores_letters("ניגע אל החלום", "ניגע אל החלום")
     assert not restores_letters("ניגע אל החלו", "ניגע אל החלם")
+
+
+def test_directions_go_above_the_measure_under_them():
+    measures = []
+    for number in (1, 2, 3):
+        m = m21.stream.Measure([m21.note.Note("C4", quarterLength=4)], number=number)
+        m.layoutWidth = 100  # tenths of an interline
+        measures.append(m)
+    measures[0].insert(0, m21.layout.SystemLayout(leftMargin=50))
+    measures[2].insert(0, m21.layout.PageLayout(isNew=True))
+    measures[2].insert(0, m21.layout.SystemLayout(leftMargin=50))
+    score = m21.stream.Score([m21.stream.Part(measures)])
+    places = measure_places(score, interline=20)  # 2 pixels per tenth
+    assert places == [(1, 0, 0, 100, 300), (2, 0, 0, 300, 500), (3, 1, 0, 100, 300)]
+    items = [Item("direction", "Swing", 0, (160, 0, 200, 10), 10), Item("direction", "Slower", 1, (10, 0, 40, 10), 10)]
+    assert add_directions(score, items, places, [0.5, 0.5]) == 2  # half a point per pixel
+
+    def words(n):
+        return [e.content for e in score.parts[0].measure(n).getElementsByClass(m21.expressions.TextExpression)]
+    assert (words(1), words(2), words(3)) == ([], ["Swing"], ["Slower"])
