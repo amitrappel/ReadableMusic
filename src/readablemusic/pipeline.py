@@ -18,6 +18,7 @@ from .scale import staff_evidence
 from .symbols import fix_symbols
 from .textlayer import fix_text, has_text
 from .tidy import tidy
+from .vision import ask, correct
 
 MIN_STAFF_SHARE = 0.1  # pages with less staff evidence than this share of the best page may hold no music
 
@@ -35,6 +36,7 @@ def _read_text(source: Path, pages: list, interline: float) -> list[Item]:
 def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
     """Recognise the pages in inputs and write one cleaned MusicXML per score Audiveris finds."""
     pages = load_pages(inputs)
+    first_page = pages[0]  # as printed, for Claude; sheet 1 of Audiveris's project
     log(f"{len(pages)} page(s) loaded, first page {pages[0].width}x{pages[0].height}")
     work = out_dir / "work"
     work.mkdir(parents=True, exist_ok=True)
@@ -74,6 +76,8 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
         log(f"Audiveris failed; retrying without {len(pages) - len(music)} page(s) that look staff-less")
         mxls = audiveris.transcribe(save_tiff(music, work / f"{inputs[0].stem}.tif"), work)
         pages = music
+        if support[0] < MIN_STAFF_SHARE * max(support):
+            first_page = None  # Audiveris's first sheet is another page
     # The real lyrics, words, accidentals and ties are in the PDF's text and drawing;
     # sheet n must be page n.
     if text_pdf and len(pages) == len(support):
@@ -87,6 +91,10 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
                 log(f"Corrected {accidentals} accidental(s) and added {ties} tie(s) from the PDF drawing")
             except audiveris.AudiverisError as e:
                 log(f"Keeping Audiveris's first reading; re-export failed: {e}")
+    # Claude checks the first system's clefs, key and time, and reads credits better than OCR.
+    reading = ask(first_page, work / f"{inputs[0].stem}.omr", log) if first_page else None
+    if reading and reading.credits and scanned:
+        items = [i for i in items if i.kind not in CREDITS] + reading.items(0)
     stacked = stacked_names(source) if text_pdf else {}
     results = []
     for n, mxl in enumerate(mxls):
@@ -103,6 +111,8 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
         dest = out_dir / mxl.with_suffix(".musicxml").name
         score.write("musicxml", dest, makeNotation=False)  # Audiveris output is already notated
         write_page_text(dest, items if n == 0 else [], footnotes)
+        if n == 0 and reading and (changed := correct(dest, reading)):
+            log(f"Read again as Claude saw the first system: {changed}")
         log(f"Wrote {dest} ({len(score.parts)} parts)")
         results.append(dest)
     return results

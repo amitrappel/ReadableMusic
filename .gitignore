@@ -23,3 +23,6 @@ tools/
 # Generated evaluation data
 eval/data/
 eval/results/
+
+# API keys, local only (on Railway they are service variables)
+.env

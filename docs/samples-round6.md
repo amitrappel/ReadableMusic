@@ -40,6 +40,32 @@ later step, and fixed where it arises.
   of 4, lyric word space 2.0 instead of 1.2. Fly Me to the Moon keeps 4 pages, with 4
   systems a page instead of 5.
 
+- **Clef, key and time in the browser** (`reread.py`, "Clef, key and time" in the editor).
+  A clef or key misread for a whole part spoils every note, and on a handwritten score
+  Audiveris cannot be relied on for either (אתה הצבת: treble read as bass, 3 flats and 3/8
+  not read). The user picks the clef of each one-staff part, the key and the time; the
+  notes keep their staff places and are read again on the server, their alterations
+  worked out from printed accidentals, earlier ones in the measure, ties and the key.
+
+- **Claude checks the first system** (`vision.py`, only with `ANTHROPIC_API_KEY`). Claude
+  Opus 5.5 gets the first page and, enlarged, the start of its first system, and returns
+  each staff's clef, the key, the time and the credits as JSON. Where it differs from the
+  recognised score, the score is read again as above: clefs when its staves match the
+  score's one for one (percussion staves left out), key and time only when the score does
+  not change them later. On scans its credits replace the OCR's.
+
+  Measured on page 1 of all 18 samples before building it (no answer key: every
+  difference checked by eye). On the whole page alone it found the 3 real mistakes and
+  miscounted Mamma Mia's 6 sharps as 7; with the enlargement it made no mistake. About
+  10,000 tokens in and 200 out: 4.5 cents a score.
+
+  | Sample | Corrected |
+  |---|---|
+  | אתה הצבת | bass → treble, key 0 → 3 flats, no time → 3/8; title, subtitle, composer where OCR had none |
+  | Fair Phyllis | tenor treble → treble-8 |
+  | Dr. Doolittle | tenor treble → treble-8; credits `Dr. Doglittle`, `Lyrics & wmusic` → `Dr. Doolittle`, `Words and music` |
+  | the other 15 | nothing: Claude agreed |
+
 ## Results
 
 All 18 samples run. Every added accidental and tie was cropped from the original and
@@ -66,6 +92,15 @@ drawing to read.
 
 ## Still open
 
+- **אתה הצבת (handwritten)** after choosing treble, 3 flats and 3/8 has the right pitches
+  but: eighths whose flags were missed are quarters, so most bars are too long; some notes
+  sit a step off (the C upbeat as D) and naturals are missed; the canon entry marks ②→
+  and ③→ are read as notes; the hand-lettered lyrics are garbled; title and credits are
+  missing (all but the rhythm can be fixed in the editor).
+
+- **Part names on scans:** Dr. Doolittle's `T.` and `B.` are not read, so its parts are
+  named from their range (tenor as Soprano, bass as Baritone). Claude returns the labels;
+  they are not used yet.
 - **Syllables Audiveris did not detect at all** are still missing, though the text layer
   has them (Fly Me to the Moon, alto bar 15: `me`).
 - **Fonts not read:** MuseScore 2 (`MScore-20`, Somethin' Stupid) and LilyPond
