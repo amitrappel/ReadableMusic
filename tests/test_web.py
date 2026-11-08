@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import threading
 from collections import defaultdict
 from concurrent.futures import BrokenExecutor
@@ -157,3 +158,18 @@ def test_isolated_runs_elsewhere_and_outlives_a_crash():
     with pytest.raises(BrokenExecutor):
         web.isolated(os._exit, 1)
     assert web.isolated(os.getpid) != os.getpid()
+
+
+def test_score_is_reread_in_the_chosen_clef_key_and_time(client):
+    job = upload(client).headers["location"].rsplit("/", 1)[1]
+    xml = client.get(f"/jobs/{job}/score.musicxml").text
+    part = re.search(r'<part id="([^"]+)"', xml).group(1)
+    choice = {"score": xml, "clefs": {part: "bass"}, "fifths": -3, "time": "3/8"}
+    response = client.post(f"/api/jobs/{job}/reread", json=choice)
+    assert response.status_code == 200
+    out = response.text
+    # C4 on the first ledger line below a treble staff is E2 below a bass staff; the key flats it.
+    assert re.search(r"<step>E</step>\s*<alter>-1</alter>\s*<octave>2</octave>", out)
+    assert "<fifths>-3</fifths>" in out and "<beat-type>8</beat-type>" in out and "<sign>F</sign>" in out
+    bad = client.post(f"/api/jobs/{job}/reread", json={**choice, "clefs": {part: "soprano"}})
+    assert bad.status_code == 400 and "detail" in bad.json()

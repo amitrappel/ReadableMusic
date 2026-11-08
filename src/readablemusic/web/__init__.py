@@ -17,15 +17,17 @@ import uuid
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
+from xml.etree.ElementTree import ParseError
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from ..engrave import to_pdf
 from ..pages import page_count
 from ..pipeline import transcribe
+from ..reread import CLEFS, reread
 
 STATIC = Path(__file__).parent / "static"
 DATA = Path(os.environ.get("READABLEMUSIC_DATA", "work/web"))
@@ -47,7 +49,8 @@ engraving = asyncio.Semaphore(1)  # a large score takes much memory and CPU
 
 
 def error_response(request: Request, status: int, detail: str):
-    if request.method == "POST":  # the upload is a plain form post, so the browser shows this as a page
+    if request.method == "POST" and not request.url.path.startswith("/api/"):
+        # the upload is a plain form post, so the browser shows this as a page
         page = f'<link rel="stylesheet" href="/static/style.css"><main class="narrow"><h1>ReadableMusic</h1>' \
                f'<p>{html.escape(detail)}</p><p><a href="/">Back</a></p></main>'
         return HTMLResponse(page, status)
@@ -232,6 +235,25 @@ async def save_score(job: str, request: Request):
     tmp.replace(folder / "score.musicxml")
     (folder / "edited.pdf").replace(folder / "score.pdf")
     return {"saved": True}
+
+
+@app.post("/api/jobs/{job}/reread")
+async def reread_score(job: str, request: Request):
+    """Return the browser's score read again under the clefs, key and time signature chosen:
+    {"score": MusicXML, "clefs": {part id: clef name}, "fifths": int or null, "time": "3/8" or null}."""
+    job_dir(job)
+    try:
+        choice = await request.json()
+        score, clefs = choice["score"], choice.get("clefs") or {}
+        fifths, time_signature = choice.get("fifths"), choice.get("time") or None
+        if (not isinstance(score, str) or len(score) > MAX_SCORE_BYTES or not isinstance(clefs, dict)
+                or any(c not in CLEFS for c in clefs.values()) or not isinstance(fifths, (int, type(None)))
+                or not isinstance(time_signature, (str, type(None)))):
+            raise ValueError("Bad choice")
+        xml = await run_in_threadpool(reread, score, clefs, fifths, time_signature)
+    except (ValueError, KeyError, TypeError, ParseError) as e:
+        raise HTTPException(400, f"Could not read the score again: {e}")
+    return Response(xml, media_type="application/vnd.recordare.musicxml+xml")
 
 
 def main() -> None:

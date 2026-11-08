@@ -267,7 +267,7 @@ function updateCount() {
 
 function openPanel() {
   closePopup(true);
-  $("details").hidden = true;
+  $("details").hidden = $("signs").hidden = true;
   panelLines = lines();
   $("panel-part").replaceChildren(...panelLines.map((l, k) => new Option(l.label, k)));
   $("panel-verse").replaceChildren(...verses.map(v => new Option(v, v)));
@@ -325,7 +325,7 @@ function partRow(scorePart) {
 
 function openDetails() {
   closePopup(true);
-  $("panel").hidden = true;
+  $("panel").hidden = $("signs").hidden = true;
   $("d-title").value = all("work-title")[0]?.textContent || creditsOf("title")[0] || "";
   $("d-subtitle").value = creditsOf("subtitle").join("\n");
   for (const type of ["composer", "lyricist", "arranger"]) $(`d-${type}`).value = creators(type).join(", ");
@@ -410,6 +410,83 @@ function applyDetails() {
   render();
 }
 
+// ---- Clef, key and time, read again on the server (see reread.py)
+
+const CLEFS = { treble: "Treble", "treble-8": "Treble, an octave lower (tenor)", bass: "Bass", alto: "Alto" };
+const MAJOR = ["C♭", "G♭", "D♭", "A♭", "E♭", "B♭", "F", "C", "G", "D", "A", "E", "B", "F♯", "C♯"];
+const MINOR = ["A♭", "E♭", "B♭", "F", "C", "G", "D", "A", "E", "B", "F♯", "C♯", "G♯", "D♯", "A♯"];
+const TIME = /^\d{1,2}\/(1|2|4|8|16|32)$/;
+
+function keyName(fifths) {
+  const n = Math.abs(fifths);
+  const count = n ? `${n} ${fifths > 0 ? "sharp" : "flat"}${n > 1 ? "s" : ""}` : "No sharps or flats";
+  return `${count} (${MAJOR[fifths + 7]} major / ${MINOR[fifths + 7]} minor)`;
+}
+
+function clefName(clef) {
+  const sign = child(clef, "sign")?.textContent, octave = +(child(clef, "clef-octave-change")?.textContent || 0);
+  if (sign === "G") return octave === -1 ? CLEFS["treble-8"] : octave === 1 ? "Treble, an octave higher" : CLEFS.treble;
+  return { F: CLEFS.bass, C: CLEFS.alto }[sign] || sign;
+}
+
+const distinct = values => [...new Set(values)];
+const asRead = values => values.length ? `As read: ${values.join("; ")}` : "As read: none";
+
+function openSigns() {
+  closePopup(true);
+  $("panel").hidden = $("details").hidden = true;
+  $("s-error").textContent = "";
+  const keys = distinct(all("key").map(k => child(k, "fifths")?.textContent).filter(Boolean)).map(f => keyName(+f));
+  const fifths = Array.from({ length: 15 }, (_, k) => k - 7);
+  $("s-key").replaceChildren(new Option(asRead(keys), ""), ...fifths.map(f => new Option(keyName(f), f)));
+  const times = distinct(all("time").map(t => `${child(t, "beats")?.textContent}/${child(t, "beat-type")?.textContent}`));
+  $("s-time").value = "";
+  $("s-time").placeholder = times.length ? `as read: ${times.join(", ")}` : "none read, e.g. 3/8";
+  const names = Object.fromEntries(all("score-part").map(sp => [sp.getAttribute("id"), child(sp, "part-name")?.textContent]));
+  const rows = all("part").filter(p => !Array.from(p.getElementsByTagName("staves")).some(s => +s.textContent > 1))
+    .map(part => {
+      const id = part.getAttribute("id");
+      const select = document.createElement("select");
+      select.dataset.part = id;
+      const clefs = distinct(Array.from(part.getElementsByTagName("clef")).map(clefName));
+      select.append(new Option(asRead(clefs), ""), ...Object.entries(CLEFS).map(([value, label]) => new Option(label, value)));
+      const label = document.createElement("label");
+      label.append(`Clef of ${names[id] || id} `, select);
+      return label;
+    });
+  $("s-parts").replaceChildren(...rows);
+  $("signs").hidden = false;
+}
+
+async function applySigns() {
+  const clefs = {};
+  $("s-parts").querySelectorAll("select").forEach(s => { if (s.value) clefs[s.dataset.part] = s.value; });
+  const fifths = $("s-key").value === "" ? null : +$("s-key").value;
+  const time = $("s-time").value.trim().replace(/\s/g, "") || null;
+  if (time && !TIME.test(time)) {
+    $("s-error").textContent = "Write the time signature as beats/note value, e.g. 3/8 or 4/4.";
+    return;
+  }
+  if (!Object.keys(clefs).length && fifths === null && !time) return;
+  $("signs-apply").disabled = true;
+  $("s-error").textContent = "Reading the notes again…";
+  const response = await fetch(`/api/jobs/${job}/reread`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ score: new XMLSerializer().serializeToString(xml), clefs, fifths, time }),
+  });
+  $("signs-apply").disabled = false;
+  if (!response.ok) {
+    $("s-error").textContent = (await response.json().catch(() => ({}))).detail || `Failed (${response.status})`;
+    return;
+  }
+  useScore(await response.text());
+  markDirty();
+  render();
+  openSigns();
+  $("s-error").textContent = "Done. Check the score, then save.";
+}
+
 // ---- Save and downloads
 
 async function save() {
@@ -439,13 +516,17 @@ function setDownloads() {
 
 // ---- Start-up
 
-async function loadEditor() {
-  $("status").textContent = "Loading the score…";
-  const [text] = await Promise.all([fetch(`/jobs/${job}/score.musicxml`).then(r => r.text()), verovioReady]);
+function useScore(text) {
   xml = new DOMParser().parseFromString(text, "application/xml");
   notes = Array.from(xml.getElementsByTagName("note"));
   verses = [...new Set(Array.from(xml.getElementsByTagName("lyric")).map(lyricNumber))].sort((a, b) => a - b);
   if (!verses.length) verses = ["1"];
+}
+
+async function loadEditor() {
+  $("status").textContent = "Loading the score…";
+  const [text] = await Promise.all([fetch(`/jobs/${job}/score.musicxml`).then(r => r.text()), verovioReady]);
+  useScore(text);
   tk = new verovio.toolkit();
   render();
   setDownloads();
@@ -469,6 +550,9 @@ async function loadEditor() {
   $("details-view").addEventListener("click", openDetails);
   $("details-apply").addEventListener("click", applyDetails);
   $("details-close").addEventListener("click", () => { $("details").hidden = true; });
+  $("signs-view").addEventListener("click", openSigns);
+  $("signs-apply").addEventListener("click", applySigns);
+  $("signs-close").addEventListener("click", () => { $("signs").hidden = true; });
   let resize;
   addEventListener("resize", () => {
     clearTimeout(resize);

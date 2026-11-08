@@ -14,6 +14,7 @@
   <span class="spacer"></span>
   <span id="tools" hidden>
     <button id="details-view" type="button">Edit title and parts</button>
+    <button id="signs-view" type="button">Clef, key and time</button>
     <button id="text-view" type="button">Edit a line as text</button>
     <button id="save" type="button" disabled>Save changes</button>
     <a id="get-xml" class="button" download>MusicXML</a>
@@ -58,6 +59,18 @@
   <p class="small">In the larger boxes, each line is printed as its own line.</p>
   <button id="details-apply" type="button">Apply</button>
   <button id="details-close" type="button">Close</button>
+</aside>
+
+<aside id="signs" class="panel" hidden>
+  <h2>Clef, key and time</h2>
+  <p class="small">A clef or key read wrongly makes every note wrong. Choose what the
+    original shows: the notes keep their places on the staff and are read again.</p>
+  <label>Key <select id="s-key"></select></label>
+  <label>Time <input id="s-time" size="10"></label>
+  <div id="s-parts"></div>
+  <p id="s-error" class="small"></p>
+  <button id="signs-apply" type="button">Apply</button>
+  <button id="signs-close" type="button">Close</button>
 </aside>
 
 <script src="https://cdn.jsdelivr.net/npm/verovio@6.3.0/dist/verovio-toolkit-wasm.js"></script>
