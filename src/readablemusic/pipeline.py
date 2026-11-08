@@ -15,6 +15,7 @@ from .pagetext import (CREDITS, Bounds, Item, add_directions, drop_repeated_text
                        stacked_names, write_page_text)
 from .parts import merge_parts, standardize_names
 from .scale import staff_evidence
+from .symbols import fix_symbols
 from .textlayer import fix_text, has_text
 from .tidy import tidy
 
@@ -73,15 +74,19 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
         log(f"Audiveris failed; retrying without {len(pages) - len(music)} page(s) that look staff-less")
         mxls = audiveris.transcribe(save_tiff(music, work / f"{inputs[0].stem}.tif"), work)
         pages = music
-    # The real lyrics and words are in the PDF's text; sheet n must be page n.
+    # The real lyrics, words, accidentals and ties are in the PDF's text and drawing;
+    # sheet n must be page n.
     if text_pdf and len(pages) == len(support):
         omr = work / f"{source.stem}.omr"
-        if (fixed := fix_text(omr, source)):
+        fixed = fix_text(omr, source)
+        accidentals, ties = fix_symbols(omr, source)
+        if fixed or accidentals or ties:
             try:
                 mxls = audiveris.export(omr, work)
                 log(f"Corrected {fixed} lyric syllable(s) or word(s) from the PDF text")
+                log(f"Corrected {accidentals} accidental(s) and added {ties} tie(s) from the PDF drawing")
             except audiveris.AudiverisError as e:
-                log(f"Keeping the OCR'd lyrics; re-export failed: {e}")
+                log(f"Keeping Audiveris's first reading; re-export failed: {e}")
     stacked = stacked_names(source) if text_pdf else {}
     results = []
     for n, mxl in enumerate(mxls):
