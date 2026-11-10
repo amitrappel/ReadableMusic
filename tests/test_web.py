@@ -173,3 +173,13 @@ def test_score_is_reread_in_the_chosen_clef_key_and_time(client):
     assert "<fifths>-3</fifths>" in out and "<beat-type>8</beat-type>" in out and "<sign>F</sign>" in out
     bad = client.post(f"/api/jobs/{job}/reread", json={**choice, "clefs": {part: "soprano"}})
     assert bad.status_code == 400 and "detail" in bad.json()
+
+
+def test_voices_are_moved_onto_the_staves_chosen(client):
+    from test_staves import SCORE
+    job = upload(client).headers["location"].rsplit("/", 1)[1]
+    response = client.post(f"/api/jobs/{job}/staves", json={"score": SCORE, "staves": 4})
+    assert response.status_code == 200
+    assert response.text.count("<score-part ") == 4 and "<part-name>Tenor</part-name>" in response.text
+    bad = client.post(f"/api/jobs/{job}/staves", json={"score": SCORE, "staves": 1})
+    assert bad.status_code == 400 and "detail" in bad.json()

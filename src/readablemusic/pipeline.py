@@ -10,6 +10,7 @@ from . import audiveris
 from .clefs import fix_clefs
 from .chords import add_chords, text_chords
 from .cleanup import blank_outside_music, music_band, whiten
+from .engrave import line_breaks
 from .lyrics import clean_lyrics, drop_stray_lines
 from .ocr import read_scan_text, repair_hebrew_credits
 from .pages import load_pages, save_tiff
@@ -149,6 +150,7 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
         write_page_text(dest, items if n == 0 else [], footnotes)
         if n == 0 and reading and not scanned and (changed := correct(dest, reading)):
             log(f"Read again as Claude saw the first system: {changed}")
+        dest.write_text(line_breaks(dest.read_text(encoding="utf-8")), encoding="utf-8")
         log(f"Wrote {dest} ({len(score.parts)} parts)")
         results.append(dest)
     return results

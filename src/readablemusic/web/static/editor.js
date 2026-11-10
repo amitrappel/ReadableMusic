@@ -5,7 +5,9 @@
 
 const job = location.pathname.split("/")[2];
 const $ = id => document.getElementById(id);
-const SCALE = 40;
+// The PDF's page (_toolkit in engrave.py): A4 with 5 mm staves is 1.44 times Verovio's natural
+// size, with 20 mm margins at the sides, and the lines are the PDF's, written in the score.
+const PAGE = { pageWidth: 3024, pageHeight: 4277, pageMarginLeft: 288, pageMarginRight: 288, lyricWordSpace: 2.0 };
 
 let tk, xml, notes, verses;
 let dirty = false;
@@ -92,10 +94,10 @@ function render() {
   const copy = xml.cloneNode(true);
   Array.from(copy.getElementsByTagName("note")).forEach((n, i) => n.setAttribute("id", "n" + i));
   tk.setOptions({
-    scale: SCALE,
-    pageWidth: Math.round($("score").clientWidth * 100 / SCALE),
+    ...PAGE,
+    scale: Math.max(10, Math.floor($("score").clientWidth * 100 / PAGE.pageWidth)),  // the page fills the window
     adjustPageHeight: true,
-    breaks: "auto",
+    breaks: "line",
     header: "encoded",  // the title and credits, as in the PDF
     footer: "encoded",
   });
@@ -408,6 +410,7 @@ function applyDetails() {
   });
   markDirty();
   render();
+  fillStaves();  // a part renamed may hold one voice more or less
 }
 
 // ---- Clef, key and time, read again on the server (see reread.py)
@@ -487,6 +490,42 @@ async function applySigns() {
   $("s-error").textContent = "Done. Check the score, then save.";
 }
 
+// ---- Staves: the voices spread over more staves or gathered onto fewer, on the server (see staves.py)
+
+// As voices_of in staves.py: a staff named after two voices ("Soprano, Alto") holds both.
+const voiceCount = () => all("score-part")
+  .reduce((n, sp) => n + ((child(sp, "part-name")?.textContent || "").split(", ").length === 2 ? 2 : 1), 0);
+
+function fillStaves() {
+  const n = voiceCount(), now = all("part").length, least = Math.ceil(n / 2);
+  const counts = Array.from({ length: n - least + 1 }, (_, k) => least + k);
+  $("staves").replaceChildren(...counts.map(c => new Option(c, c)));
+  $("staves").value = now;
+  $("staves-box").hidden = counts.length < 2 || !counts.includes(now);
+}
+
+async function applyStaves() {
+  closePopup(true);
+  $("staves").disabled = true;
+  $("status").textContent = "Moving the voices…";
+  const response = await fetch(`/api/jobs/${job}/staves`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ score: new XMLSerializer().serializeToString(xml), staves: +$("staves").value }),
+  });
+  $("staves").disabled = false;
+  if (!response.ok) {
+    $("status").textContent = (await response.json().catch(() => ({}))).detail || `Failed (${response.status})`;
+    fillStaves();
+    return;
+  }
+  useScore(await response.text());
+  markDirty();
+  render();
+  fillStaves();
+  $("status").textContent = "Voices moved. Check the score, then save.";
+}
+
 // ---- Save and downloads
 
 async function save() {
@@ -529,6 +568,7 @@ async function loadEditor() {
   useScore(text);
   tk = new verovio.toolkit();
   render();
+  fillStaves();
   setDownloads();
   $("tools").hidden = false;
   $("help").hidden = false;
@@ -553,6 +593,7 @@ async function loadEditor() {
   $("signs-view").addEventListener("click", openSigns);
   $("signs-apply").addEventListener("click", applySigns);
   $("signs-close").addEventListener("click", () => { $("signs").hidden = true; });
+  $("staves").addEventListener("change", applyStaves);
   let resize;
   addEventListener("resize", () => {
     clearTimeout(resize);

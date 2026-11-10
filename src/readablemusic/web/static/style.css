@@ -40,6 +40,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 .bar .spacer { flex: 1; }
 #tools { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 #tools[hidden] { display: none; }
+#staves-box { display: flex; align-items: center; gap: 0.3rem; }
+#staves-box[hidden] { display: none; }
 #status { color: var(--muted); }
 #help { margin-top: 1rem; }
 

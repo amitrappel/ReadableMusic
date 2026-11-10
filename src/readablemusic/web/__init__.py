@@ -24,10 +24,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from ..engrave import to_pdf
+from ..engrave import line_breaks, to_pdf
 from ..pages import page_count
 from ..pipeline import transcribe
 from ..reread import CLEFS, reread
+from ..staves import restaff
 
 STATIC = Path(__file__).parent / "static"
 DATA = Path(os.environ.get("READABLEMUSIC_DATA", "work/web"))
@@ -226,11 +227,14 @@ async def save_score(job: str, request: Request):
     if len(data) > MAX_SCORE_BYTES or b"<score-partwise" not in data[:2000]:
         raise HTTPException(400, "Not a MusicXML score")
     tmp = folder / "edited.musicxml"
-    tmp.write_bytes(data)
+
+    def engrave() -> None:  # the file keeps the PDF's lines, which edits may have moved
+        tmp.write_text(line_breaks(data.decode("utf-8")), encoding="utf-8")
+        to_pdf(tmp, folder / "edited.pdf")
     try:
         async with engraving:
-            await run_in_threadpool(to_pdf, tmp, folder / "edited.pdf")
-    except ValueError as e:
+            await run_in_threadpool(engrave)
+    except (ValueError, ParseError) as e:
         raise HTTPException(400, str(e))
     tmp.replace(folder / "score.musicxml")
     (folder / "edited.pdf").replace(folder / "score.pdf")
@@ -253,6 +257,23 @@ async def reread_score(job: str, request: Request):
         xml = await run_in_threadpool(reread, score, clefs, fifths, time_signature)
     except (ValueError, KeyError, TypeError, ParseError) as e:
         raise HTTPException(400, f"Could not read the score again: {e}")
+    return Response(xml, media_type="application/vnd.recordare.musicxml+xml")
+
+
+@app.post("/api/jobs/{job}/staves")
+async def restaff_score(job: str, request: Request):
+    """Return the browser's score with its voices on the number of staves chosen:
+    {"score": MusicXML, "staves": int}."""
+    job_dir(job)
+    try:
+        choice = await request.json()
+        score, count = choice["score"], choice["staves"]
+        if not isinstance(score, str) or len(score) > MAX_SCORE_BYTES or not isinstance(count, int):
+            raise ValueError("Bad choice")
+        async with engraving:
+            xml = await run_in_threadpool(lambda: line_breaks(restaff(score, count)))
+    except (ValueError, KeyError, TypeError, ParseError) as e:
+        raise HTTPException(400, f"Could not change the staves: {e}")
     return Response(xml, media_type="application/vnd.recordare.musicxml+xml")
 
 
