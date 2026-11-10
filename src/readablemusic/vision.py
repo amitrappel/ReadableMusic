@@ -6,6 +6,7 @@ Recognition can misread a handwritten clef, miss a key or time signature, or dro
 sees the page and, enlarged, the start of the first system; where it disagrees with the
 recognised score, the score is read again under what it saw (reread.py). On 18 samples it
 found 3 such mistakes and made none of its own; on the whole page alone it miscounted a key.
+On a scan its clefs go to every system (system_clefs).
 
 Runs only when ANTHROPIC_API_KEY is set (`uv run --env-file .env ...`), at about 5 cents a
 score. Any failure leaves the recognised score as it is.
@@ -24,6 +25,7 @@ from pathlib import Path
 from PIL import Image
 
 from .pagetext import Item
+from .reader import systems_of
 from .reread import CLEFS, TIME, reread
 
 MODEL = "claude-opus-5-5"
@@ -156,10 +158,46 @@ def _clef_name(clef: ET.Element) -> str:
     return next((name for name, c in CLEFS.items() if c == sign), "other")
 
 
-def corrections(xml: str, reading: Reading) -> tuple[dict[str, str], int | None, str | None]:
+def _shown(part: ET.Element) -> list[bool]:
+    """Whether the part's staff is printed in each measure: Audiveris hides it in the systems
+    where another of its parts is that staff."""
+    out, shown = [], True
+    for m in part.findall("measure"):
+        for details in m.findall("attributes/staff-details"):
+            if details.get("print-object"):
+                shown = details.get("print-object") != "no"
+        out.append(shown)
+    return out
+
+
+def system_clefs(root: ET.Element, seen: list[str]) -> dict[str, str]:
+    """For a scan, whose staves keep their clefs: part id -> the clef seen on the first
+    system's staff that the part is, by its place among the staves shown, in every system
+    where it is shown; for the parts read in any other clef. Audiveris misreads the 8 under
+    a tenor's clef differently from system to system (האדון הרופא: two C clefs, an 8 above),
+    and starts a part of its own where it misreads a staff's name."""
+    parts = root.findall("part")
+    if any(int(s.text or 1) > 1 for s in root.iter("staves")):
+        return {}
+    shown = [_shown(p) for p in parts]
+    found: dict[str, set[str]] = {}
+    for measures in systems_of(root):
+        here = [p for p, s in zip(parts, shown) if s[measures[0]]]
+        if len(here) == len(seen):
+            for part, clef in zip(here, seen):
+                found.setdefault(part.get("id"), set()).add(clef)
+    out = {}
+    for part in parts:
+        clefs = found.get(part.get("id"), set())
+        if len(clefs) == 1 and (clef := clefs.pop()) in CLEFS and {_clef_name(c) for c in part.iter("clef")} != {clef}:
+            out[part.get("id")] = clef
+    return out
+
+
+def corrections(xml: str, reading: Reading, scan: bool = False) -> tuple[dict[str, str], int | None, str | None]:
     """(part id -> clef, fifths, time) where the reading differs from the score: the clefs
-    when the staves of the score's first measure match the first system's one for one, the
-    key and time only when the score does not change them later."""
+    when the staves of the score's first measure match the first system's one for one (on a
+    scan, system_clefs), the key and time only when the score does not change them later."""
     root = ET.fromstring(xml[xml.index("<score-partwise"):])
     staves = []  # (part id, or None for a part on several staves; its clef)
     for part in root.iter("part"):
@@ -172,6 +210,8 @@ def corrections(xml: str, reading: Reading) -> tuple[dict[str, str], int | None,
         seen = [c for c in seen if c != "other"]  # percussion staves, which are dropped
     clefs = {} if len(seen) != len(staves) else \
         {part: clef for (part, ours), clef in zip(staves, seen) if part and clef in CLEFS and clef != ours}
+    if scan:
+        clefs = system_clefs(root, reading.clefs) or system_clefs(root, [c for c in reading.clefs if c != "other"])
     keys = [int(k.findtext("fifths")) for k in root.iter("key") if k.findtext("fifths")]
     times = [f"{t.findtext('beats')}/{t.findtext('beat-type')}" for t in root.iter("time")]
     fifths = reading.fifths if (reading.fifths != (keys[0] if keys else 0) and len(set(keys)) <= 1
@@ -181,7 +221,7 @@ def corrections(xml: str, reading: Reading) -> tuple[dict[str, str], int | None,
     return clefs, fifths, time
 
 
-def correct(musicxml: Path, reading: Reading) -> str:
+def correct(musicxml: Path, reading: Reading, scan: bool = False) -> str:
     """Read the score (MusicXML, or Audiveris's compressed .mxl) again where Claude saw other
     clefs, key or time; say what changed."""
     name = None
@@ -191,7 +231,7 @@ def correct(musicxml: Path, reading: Reading) -> str:
             xml = z.read(name).decode("utf-8")
     else:
         xml = musicxml.read_text(encoding="utf-8")
-    clefs, fifths, time = corrections(xml, reading)
+    clefs, fifths, time = corrections(xml, reading, scan)
     if not (clefs or fifths is not None or time):
         return ""
     if name:

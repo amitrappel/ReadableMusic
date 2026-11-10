@@ -307,16 +307,27 @@ def _words(lyric: ET.Element) -> str:
     return "_".join(t.text or "" for t in lyric.findall("text"))
 
 
-def _shared_words(upper: list[Event], lower: list[Event], lines: int) -> None:
-    """Drop the lower voice's words that the upper sings at the same time, and put those
-    where it sings other words below the upper's lines."""
-    sung = {(t, l.get("number", "1")): _words(l) for t, _, notes in upper for l in notes[0].findall("lyric")}
-    for t, _, notes in lower:
-        for l in notes[0].findall("lyric"):
-            number = l.get("number", "1")
-            if (here := sung.get((t, number))) == _words(l):
-                notes[0].remove(l)
-            elif here is not None and number.isdigit():
+def _shared_words(measures: list[tuple[list[Event], list[Event]]], lines: int) -> None:
+    """Drop the lower voice's words that the upper sings at the same time. Where the two
+    sing other words at the same time anywhere, the lower's own go below the upper's lines,
+    all of them in a measure where it has its own (the bass's "sha-ru" under the tenor's in
+    האדון הרופא); else the two share the lines."""
+    found, apart = [], False  # per measure: the lower's words, (note, lyric, the upper's the same)
+    for upper, lower in measures:
+        sung = {(t, l.get("number", "1")): _words(l) for t, _, notes in upper for l in notes[0].findall("lyric")}
+        words = []
+        for t, _, notes in lower:
+            for l in notes[0].findall("lyric"):
+                here = sung.get((t, l.get("number", "1")))
+                words.append((notes[0], l, here == _words(l)))
+                apart |= here is not None and here != _words(l)
+        found.append(words)
+    for words in found:
+        own = any(not same for _, _, same in words)
+        for note, l, same in words:
+            if same and not (apart and own):
+                note.remove(l)
+            elif apart and (number := l.get("number", "1")).isdigit():
                 l.set("number", str(int(number) + lines))
                 if "name" in l.attrib:
                     l.set("name", l.get("number"))
@@ -404,8 +415,8 @@ def _part(voices: list[Voice], top: bool, pid: str) -> ET.Element:
         built.append(row)
     if len(voices) == 2:
         lines = max(_lyric_lines(e) for row in built for e in row[0].values())
-        for row in built:
-            _shared_words([e for es in row[0].values() for e in es], [e for es in row[1].values() for e in es], lines)
+        _shared_words([([e for es in row[0].values() for e in es], [e for es in row[1].values() for e in es])
+                       for row in built], lines)
     for k, row in enumerate(built):
         source = sources[0][k]
         m = ET.SubElement(part, "measure", {a: v for a, v in source.attrib.items() if a in ("number", "implicit")})

@@ -266,3 +266,9 @@ def test_a_system_is_turned_level():
     turned = level(img, -20 / 400)
     assert abs(row(turned, 50) - row(turned, 350)) <= 1
     assert level(img, 0.0001) is img
+
+
+def test_boxed_letters_and_the_segno_are_marks_of_their_own():
+    assert direction("A", True).find("direction-type/rehearsal").get("enclosure") == "square"
+    assert direction("𝄋", True).find("direction-type/segno") is not None
+    assert direction("A tempo", True).findtext("direction-type/words") == "A tempo"

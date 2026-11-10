@@ -144,6 +144,38 @@ bar 9 that belongs to the "(Finis 𝄐)" under it, which Claude puts on the syst
 despite being told. Claude's readings differ from run to run; the second run had other
 notes a step off, which the kept pitches mended. $0.30 for the 7 systems, one read twice.
 
+## Layout and staves
+
+Verovio put as many measures on a line as fit (14 of אתה הצבת) on margins of 3.5 mm. Now
+the margins are 20 mm at the sides, 15 at top and bottom, and a line holds 4 measures, or 3
+where four would take more than 80% of it at Verovio's natural spacing
+(`engrave.line_breaks`, written into the MusicXML, so the editor, the PDF and the download
+agree). In the editor, **Staves** spreads the voices over more staves or gathers them onto
+fewer (`staves.py`): SATB on two staves is S A | T B, on three S | A | T B. Tried on
+Siyahamba and האדון הרופא, the only samples here with several voices.
+
+## האדון הרופא (page 1)
+
+A clean scan, SATB on three staves (S A shared, T in the treble 8, B), with a lyrics page
+after the music. Only page 1 was run, to save money: $0.68, then $0.49 after the clef fix.
+
+| Bars | Mistake | Cause |
+|---|---|---|
+| all | the tenor an octave high on some systems and right on others, named Alto | Audiveris read the tenor's treble 8 as treble, two C clefs and a treble with an 8 above, and the bass as a treble 8va on systems 3 and 4; it made system 4's top staff a part of its own ("TI]"), so the first measure had four parts for three staves and Claude's first-page clefs (right: treble, treble-8, bass) were not used |
+| 7 | the segno a box; the boxed A and B missing | the text font has no segno; tidy drops "A" and "B" as chord names |
+| — | the bass named Baritone | its range; Audiveris read no part names |
+
+Changes:
+
+- **On a scan, Claude's first-system clefs go to every system** (`vision.system_clefs`):
+  staves are matched by their place among those Audiveris shows in each system, and a part
+  that is the same staff everywhere is read in that clef throughout.
+- **Boxed letters are rehearsal marks, the segno and coda signs marks of their own**; the
+  prompt now names them (the second run did not report the segno; not run again).
+- **An unnamed lowest voice is the bass**, whatever its range.
+- **Staves:** where two voices put on one staff sing other words at the same time, the
+  lower's own go on lines below (the bass's "sha-ru" in bars 11–12).
+
 ## Still open
 
 - **Barlines Audiveris missed** are not mended; Claude could split a measure that adds up to

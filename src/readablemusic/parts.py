@@ -351,6 +351,8 @@ def standardize_names(score: m21.stream.Score, stacked: dict[str, str] | None = 
             kinds[i] = kind
     if len(parts) == 1 and not read[0] and not roles[0]:  # a lone melody: nothing says which voice
         kinds = [(UNNAMED, None, "")]
+    elif len(parts) > 1 and not read[-1] and kinds[-1] and kinds[-1][0] == "Baritone":
+        kinds[-1] = ("Bass", "B", "")  # by range alone, the lowest voice is the bass (האדון הרופא)
     counts =Counter(k[0] for k in kinds if k and not k[2])
     numbers: Counter = Counter()
     originals = []

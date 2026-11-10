@@ -179,3 +179,10 @@ def test_a_voice_without_a_clef_does_not_take_a_staff_from_one_that_matches():
     drums.names["Drumset"] += 1
     assert align(["Voice"], [bass, drums], [Sound(("F", 0), 41)]) == [0]
 
+
+
+def test_an_unnamed_lowest_voice_is_the_bass_however_high_it_sings():
+    score = m21.stream.Score([_part(_voice("Voice"), "A4", clef=m21.clef.TrebleClef()),
+                              _part(_voice("Voice"), "E3", "C4", clef=m21.clef.BassClef())])
+    standardize_names(score)
+    assert score.parts[1].partName == "Bass"

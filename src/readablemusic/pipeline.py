@@ -117,7 +117,7 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
     # printed, so the notes are read under the right clef and key before, not after.
     rewritten, chords = set(), []
     if scanned:
-        if reading and (changed := correct(mxls[0], reading)):
+        if reading and (changed := correct(mxls[0], reading, scan=True)):
             log(f"Read again as Claude saw the first system: {changed}")
         rewritten, chords = read_again(mxls[0], work / f"{inputs[0].stem}.omr", lambda: _sheets(inputs, kept), log)
     elif len(pages) == len(support):

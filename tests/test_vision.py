@@ -71,3 +71,27 @@ def test_the_score_is_read_again(tmp_path):
 def test_nothing_is_sent_without_a_key(monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert ask(Image.new("L", (10, 10)), tmp_path / "missing.omr") is None
+
+
+def test_on_a_scan_each_system_takes_the_clefs_of_the_first():
+    # Audiveris read the tenor's treble 8 as a C clef on the second system, and the top staff
+    # of the second system as a part of its own, which it puts first (P1), with an 8 above.
+    def measure(n, clef, shown, system):
+        sign, line, octave = clef
+        clef_el = (f"<clef><sign>{sign}</sign><line>{line}</line>"
+                   + (f"<clef-octave-change>{octave}</clef-octave-change>" if octave else "") + "</clef>")
+        mark = '<print new-system="yes"/>' if system else "<print/>"
+        details = f'<staff-details print-object="{"yes" if shown else "no"}"/>'
+        return (f'<measure number="{n}">{mark}<attributes><divisions>1</divisions>{clef_el}{details}</attributes>'
+                f"<note><pitch><step>E</step><octave>5</octave></pitch><duration>4</duration></note></measure>")
+    parts = {"P1": [(("G", 2, 1), False), (("G", 2, 1), True)],
+             "P2": [(("G", 2, 0), True), (("G", 2, 0), False)],
+             "P3": [(("G", 2, -1), True), (("C", 3, 0), True)]}
+    body = "".join(f'<part id="{p}">' + "".join(measure(n, c, s, n > 1) for n, (c, s) in enumerate(ms, 1)) + "</part>"
+                   for p, ms in parts.items())
+    names = "".join(f'<score-part id="{p}"><part-name>V</part-name></score-part>' for p in parts)
+    xml = f'<score-partwise version="4.0"><part-list>{names}</part-list>{body}</score-partwise>'
+    reading = Reading(["treble", "treble-8"], 0, "4/4", {})
+    assert corrections(xml, reading)[0] == {}  # the first measure has three parts for two staves
+    # P1 is the top staff where it is shown, P3 the tenor's in both systems.
+    assert corrections(xml, reading, scan=True)[0] == {"P1": "treble", "P3": "treble-8"}

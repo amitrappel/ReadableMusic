@@ -61,10 +61,12 @@ ALTER = {"": 0, "#": 1, "##": 2, "b": -1, "bb": -2}
 ACCIDENTAL = {0: "natural", 1: "sharp", 2: "double-sharp", -1: "flat", -2: "flat-flat"}
 MOVABLE = ("direction", "harmony", "sound")  # placed by their onset among the notes
 DUET_CHORDS = 0.3  # share of a staff's notes on one stem in chords from which two parts share it
-TEXT = ("words", "dynamics")  # the directions that Claude's reading replaces
+TEXT = ("words", "dynamics", "rehearsal", "segno", "coda")  # the directions that Claude's reading replaces
 UNMARKED = {"fermata": False, "slurs": (0, 0)}  # the marks of an event that another voice prints
 UNITS = {1: "wholes", 2: "halves", 4: "quarters", 8: "eighths", 16: "sixteenths", 32: "32nds"}
 DYNAMICS = re.compile(r"p{1,4}|f{1,4}|mp|mf|sf|sfz|sfp|fp|fz|rfz")
+REHEARSAL = re.compile(r"[A-Z]\d?")  # a boxed letter; Claude lists chord symbols apart
+SIGNS = {"𝄋": "segno", "𝄌": "coda"}  # which the text font lacks
 
 PROMPT = """The image shows one system of an a cappella choir score. Below is an optical
 music recognition draft of it, which has mistakes: notes a step off, missed ties, dots,
@@ -104,7 +106,8 @@ Also list:
 - every chord symbol printed above the staves ("G", "D7", "Bbm7/Ab"), as printed;
 - every other word or mark printed in the music, as printed: dynamics ("p", "mf"), tempo
   and expression ("Slowly", "rit."), instructions ("Last time, end"), with the staff it
-  belongs to and whether it is above or below that staff, and circled numbers as "①".
+  belongs to and whether it is above or below that staff, and circled numbers as "①",
+  letters in a box as the letter ("A"), the segno sign as "𝄋", the coda sign as "𝄌".
   A fermata printed among words, as in "(Finis 𝄐)", stands over a note of the staff below
   the words: put "^" on that note, and write the words without it ("(Finis)"). Leave out titles, credits, part
   names, page and measure numbers, footnotes, and text of the systems above and below,
@@ -486,13 +489,18 @@ def _is_text(el: ET.Element) -> bool:
 
 def direction(text: str, above: bool) -> ET.Element:
     """A direction printing text, as dynamics where it is one ('mf'); a circled number ('①',
-    which the text font lacks) as the number in a circle."""
+    which the text font lacks) as the number in a circle, a letter as a rehearsal mark in a
+    box ('A', which tidy.py would drop as a chord), a segno or coda sign as itself."""
     d = ET.Element("direction", placement="above" if above else "below")
     kind = ET.SubElement(d, "direction-type")
     if DYNAMICS.fullmatch(text):
         ET.SubElement(ET.SubElement(kind, "dynamics"), text)
     elif len(text) == 1 and "①" <= text <= "⑳":
         ET.SubElement(kind, "words", enclosure="circle").text = str(ord(text) - ord("①") + 1)
+    elif REHEARSAL.fullmatch(text):
+        ET.SubElement(kind, "rehearsal", enclosure="square").text = text
+    elif text in SIGNS:
+        ET.SubElement(kind, SIGNS[text])
     else:
         ET.SubElement(kind, "words").text = text
     return d
