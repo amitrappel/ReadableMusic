@@ -19,6 +19,7 @@ the same way.
 import difflib
 import html
 import re
+import textwrap
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,7 @@ MARGIN = 0.15  # share of the page width at the left that holds part names
 PROSE_WORDS = 5  # an unlabeled line this long that ends like a sentence is not a credit
 BELOW_LABEL = 2.5  # font heights under a label alone where its name may be
 DIRECTION_WORDS = 4  # longer text just above the first staff is not a tempo or style mark
+SIDE_CREDIT = 32  # characters a line of a credit beside the title holds without reaching it
 CHORD_SYMBOL = re.compile(r"[A-G][#b♯♭]?(m|maj|min|dim|aug|sus|add|M)?\d*(/[A-G][#b♯♭]?)?")
 
 
@@ -343,8 +345,10 @@ def write_page_text(musicxml: Path, items: list[Item], footnotes: list[str] = ()
     for kind, justify, text in header_lines(items):
         credit_type = f"<credit-type>{kind}</credit-type>" if kind else ""
         bold = ' font-weight="bold"' if kind == "title" else ""
-        words.append(f'<credit page="1">{credit_type}<credit-words justify="{justify}" valign="top"{bold}>'
-                     f"{e(text)}</credit-words></credit>")
+        # Verovio prints the side credits level with the title: long ones go on several lines.
+        for line in [text] if justify == "center" else textwrap.wrap(text, SIDE_CREDIT):
+            words.append(f'<credit page="1">{credit_type}<credit-words justify="{justify}" valign="top"{bold}>'
+                         f"{e(line)}</credit-words></credit>")
     xml = re.sub(r"\s*<credit\b.*?</credit>", "", xml, flags=re.S)
     if words:
         xml = xml.replace("<part-list>", "\n  ".join(words) + "\n  <part-list>", 1)

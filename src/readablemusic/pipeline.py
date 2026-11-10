@@ -1,5 +1,6 @@
 """Scan to MusicXML, shared by the command line and the web worker."""
 
+import zipfile
 from pathlib import Path
 
 import music21 as m21
@@ -7,6 +8,7 @@ import pypdfium2 as pdfium
 
 from . import audiveris
 from .clefs import fix_clefs
+from .chords import add_chords, text_chords
 from .cleanup import blank_outside_music, music_band, whiten
 from .lyrics import clean_lyrics, drop_stray_lines
 from .ocr import read_scan_text, repair_hebrew_credits
@@ -14,6 +16,7 @@ from .pages import load_pages, save_tiff
 from .pagetext import (CREDITS, Bounds, Item, add_directions, drop_repeated_text, measure_places, read_page_text,
                        stacked_names, write_page_text)
 from .parts import merge_parts, standardize_names
+from .reader import beam, open_endings, read_again
 from .scale import staff_evidence
 from .symbols import fix_symbols
 from .textlayer import fix_text, has_text
@@ -31,6 +34,19 @@ def _read_text(source: Path, pages: list, interline: float) -> list[Item]:
         k = pdf[n].get_width() / page.width  # points per pixel
         bounds.append(Bounds(band.top * k, band.first * k, band.last * k, band.bottom * k) if band else None)
     return read_page_text(source, bounds)
+
+
+def _measures(mxl: Path) -> int:
+    """How many measures the first part of a compressed MusicXML file has."""
+    with zipfile.ZipFile(mxl) as z:
+        xml = z.read(next(n for n in z.namelist() if n.endswith(".xml") and not n.startswith("META-INF"))).decode()
+    return xml[:xml.find("</part>")].count("<measure ")
+
+
+def _sheets(inputs: list[Path], kept: list[int]) -> list:
+    """The pages Audiveris read, as loaded and before any text was whitened."""
+    pages = load_pages(inputs)
+    return [pages[k] for k in kept]
 
 
 def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
@@ -65,12 +81,14 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
 
     pages = [whiten(blank_outside_music(page, interline, keep=boxes(n, True)), boxes(n, False))
              for n, page in enumerate(pages)]
+    kept = list(range(len(pages)))  # page of each of Audiveris's sheets
     try:
         mxls = audiveris.transcribe(save_tiff(pages, work / f"{inputs[0].stem}.tif"), work)
     except audiveris.AudiverisError:
         # Audiveris fails the whole book on a page without staves (e.g. lyrics only).
         # Noisy music pages can look just as empty, so drop such pages only on failure.
-        music = [page for page, s in zip(pages, support) if s >= MIN_STAFF_SHARE * max(support)]
+        kept = [k for k, s in enumerate(support) if s >= MIN_STAFF_SHARE * max(support)]
+        music = [pages[k] for k in kept]
         if len(music) == len(pages):
             raise
         log(f"Audiveris failed; retrying without {len(pages) - len(music)} page(s) that look staff-less")
@@ -93,25 +111,43 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print) -> list[Path]:
                 log(f"Keeping Audiveris's first reading; re-export failed: {e}")
     # Claude checks the first system's clefs, key and time, and reads credits better than OCR.
     reading = ask(first_page, work / f"{inputs[0].stem}.omr", log) if first_page else None
-    if reading and reading.credits and scanned:
-        items = [i for i in items if i.kind not in CREDITS] + reading.items(0)
+    # On a scan Claude reads each system again, with Audiveris's reading as its draft, and
+    # its chord symbols; a notation program prints them as text. Claude's pitches are as
+    # printed, so the notes are read under the right clef and key before, not after.
+    rewritten, chords = set(), []
+    if scanned:
+        if reading and (changed := correct(mxls[0], reading)):
+            log(f"Read again as Claude saw the first system: {changed}")
+        rewritten, chords = read_again(mxls[0], work / f"{inputs[0].stem}.omr", lambda: _sheets(inputs, kept), log)
+    elif len(pages) == len(support):
+        chords = text_chords(source, work / f"{source.stem}.omr", _measures(mxls[0]))
+    if reading and (reading.credits or reading.notes) and scanned:
+        # OCR takes a footnote close to the music for lyrics, and keeps only the rest of it.
+        replaced = (CREDITS if reading.credits else ()) + (("note", "rights") if reading.notes else ())
+        items = [i for i in items if i.kind not in replaced] + reading.items(0)
     stacked = stacked_names(source) if text_pdf else {}
     results = []
     for n, mxl in enumerate(mxls):
         raw = m21.converter.parse(mxl)
+        if n == 0:
+            beam(raw, rewritten)
         # Only the first score is known to start on the first page.
         places = measure_places(raw, interline) if n == 0 and len(pages) == len(support) else []
-        score = merge_parts(drop_stray_lines(raw))
-        if (clefs := fix_clefs(score)):
-            log(f"Reread {clefs} stretch(es) of music in the clef of the rest of their part")
+        score = merge_parts(drop_stray_lines(raw), slurs=n == 0 and bool(rewritten))
+        if (clefs := fix_clefs(score, move=not rewritten)):
+            log(f"{'Gave' if rewritten else 'Reread'} {clefs} stretch(es) of music the clef of the rest of their part")
         footnotes = standardize_names(score, stacked)
         score = drop_repeated_text(tidy(clean_lyrics(score)), items)
         if (directions := add_directions(score, items, places, points)):
             log(f"Printed {directions} direction(s) from above the staves")
+        if n == 0 and (added := add_chords(score, chords)):
+            log(f"Printed {added} chord symbol(s)")
         dest = out_dir / mxl.with_suffix(".musicxml").name
         score.write("musicxml", dest, makeNotation=False)  # Audiveris output is already notated
+        if n == 0 and rewritten:
+            open_endings(dest)
         write_page_text(dest, items if n == 0 else [], footnotes)
-        if n == 0 and reading and (changed := correct(dest, reading)):
+        if n == 0 and reading and not scanned and (changed := correct(dest, reading)):
             log(f"Read again as Claude saw the first system: {changed}")
         log(f"Wrote {dest} ({len(score.parts)} parts)")
         results.append(dest)

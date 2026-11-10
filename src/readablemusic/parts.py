@@ -165,7 +165,10 @@ def _is_percussion(part: m21.stream.Part) -> bool:
     return any(isinstance(c, m21.clef.PercussionClef) for c in part.recurse().getElementsByClass(m21.clef.Clef))
 
 
-def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.stream.Score:
+def merge_parts(score: m21.stream.Score, drop_percussion: bool = True, slurs: bool = False) -> m21.stream.Score:
+    """One part per voice from Audiveris's parts, which follow the staves of each system.
+    The slurs are kept only with slurs, for Claude's reading of a scan; Audiveris's own,
+    on notation programs' PDFs, have never been checked."""
     parts = list(score.parts)
     measures = [list(p.getElementsByClass(m21.stream.Measure)) for p in parts]
     starts = _system_starts(parts[0])
@@ -203,6 +206,7 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
         mapping[s] = dict(zip(systems[s], matched))
 
     out = m21.stream.Score()
+    copies: dict[int, m21.note.GeneralNote] = {}  # id of a note in score -> its copy in out
     for v, voice in enumerate(voices):
         sources = [next((k for k, vv in mapping[s].items() if vv == v), None) for s in range(len(bounds))]
         if drop_percussion and any(k is not None and _is_percussion(parts[k]) for k in sources):
@@ -215,9 +219,44 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True) -> m21.st
         for s, (a, b) in enumerate(bounds):
             k = sources[s]
             for idx in range(a, b):
-                part.append(_measure_for(measures, k, idx, first=(idx == a), current=current))
+                m = _measure_for(measures, k, idx, first=(idx == a), current=current)
+                if k is not None:
+                    copies.update(zip(map(id, measures[k][idx].recurse().notesAndRests), m.recurse().notesAndRests))
+                part.append(m)
         out.append(part)
+    _copy_endings(parts, measures, out)
+    if slurs:
+        _copy_slurs(parts, copies, out)
     return out
+
+
+def _copy_slurs(parts: list[m21.stream.Part], copies: dict, out: m21.stream.Score) -> None:
+    """Slur the copied notes as their originals are; like brackets, slurs are held by the parts."""
+    owner = {id(n): part for part in out.parts for n in part.recurse().notesAndRests}
+    for part in parts:
+        for slur in part.recurse().getElementsByClass(m21.spanner.Slur):
+            notes = [copies.get(id(n)) for n in slur.getSpannedElements()]
+            if notes and all(notes) and len({id(owner.get(id(n))) for n in notes}) == 1 and id(notes[0]) in owner:
+                owner[id(notes[0])].insert(0, m21.spanner.Slur(notes))
+
+
+def _copy_endings(parts: list[m21.stream.Part], measures: list[list], out: m21.stream.Score) -> None:
+    """Bracket the first and second endings that every part has over the same measures; the
+    measures were copied, and the brackets, which parts hold, were not. Audiveris puts
+    brackets of its own in a part or two, over measures far apart."""
+    found: dict[tuple, int] = {}
+    for part, ms in zip(parts, measures):
+        index = {id(m): k for k, m in enumerate(ms)}
+        here = {(str(b.number), tuple(index[id(m)] for m in b.getSpannedElements() if id(m) in index))
+                for b in part.recurse().getElementsByClass(m21.spanner.RepeatBracket)}
+        for key in here:
+            if key[1]:
+                found[key] = found.get(key, 0) + 1
+    for part in out.parts:
+        new = list(part.getElementsByClass(m21.stream.Measure))
+        for (number, spanned), count in found.items():
+            if count == len(parts) and spanned[-1] < len(new):
+                part.insert(0, m21.spanner.RepeatBracket([new[k] for k in spanned], number=number))
 
 
 VOICE_TYPES = {  # standard name and abbreviation of each way scores name a voice

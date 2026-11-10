@@ -22,7 +22,8 @@ uv run pytest
 
 With an Anthropic API key, Claude checks the clefs, key and time signature of the first
 system and reads the credits of scans (about 5 cents a score; see
-`src/readablemusic/vision.py`). Put `ANTHROPIC_API_KEY=...` in a `.env` file, which git
+`src/readablemusic/vision.py`), and on scans reads every system again with Audiveris's
+reading as a draft, lyrics and chord symbols included (about 7 cents a system; `reader.py`). Put `ANTHROPIC_API_KEY=...` in a `.env` file, which git
 ignores, and add `--env-file .env` after `uv run`. Without a key this step is skipped.
 
 ## Deployment

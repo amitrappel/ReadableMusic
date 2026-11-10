@@ -26,6 +26,10 @@ CREDIT_TEXT = re.compile(
     r'<text font-size="0px">\s*<tspan [^>]*class="rend"( font-weight="bold")? x="([\d.]+)" y="([\d.]+)" '
     r'text-anchor="(\w+)">\s*<tspan [^>]*class="text">\s*<tspan font-size="([\d.]+)px">([^<]*)</tspan>'
     r'\s*</tspan>\s*</tspan>\s*</text>')
+# Chord symbols nest each piece in a tspan, accidentals in Verovio's music font.
+CHORD_TEXT = re.compile(r'(<g [^>]*class="harm"[^>]*>\s*<text [^>]*?)font-size="0px">(.*?)</text>', re.S)
+CHORD_PIECE = re.compile(r'<tspan (font-family="Leipzig" )?font-size="([\d.]+)px">([^<]*)</tspan>')
+CHORD_ACCIDENTALS = {"": "b", "": "", "": "#", "𝄫": "bb", "𝄪": "x"}  # as in chord charts
 TITLE_SCALE = 1.5  # Verovio prints all credits at one size; the title is the bold one
 STAFF_GAP = 16  # Verovio units (half a staff space): least space between staves of a system
 SYSTEM_GAP = 16  # least space between systems
@@ -48,7 +52,8 @@ def _for_reportlab(svg: str) -> str:
 
     Verovio asks for Times, which svglib always maps to the built-in Latin-only font, so
     the family is renamed. Text with Hebrew is put in display order, since reportlab draws
-    all text left to right. The credits' nested text is flattened.
+    all text left to right. The credits' and chord symbols' nested text is flattened, with
+    the chords' accidentals as letters: the text font has no flat sign.
     """
     def flip(m: re.Match) -> str:
         return f">{get_display(m.group(1))}<"
@@ -58,6 +63,14 @@ def _for_reportlab(svg: str) -> str:
         size, weight = (float(size) * TITLE_SCALE, ' font-weight="bold"') if bold else (float(size), "")
         return f'<text x="{x}" y="{y}" text-anchor="{anchor}" font-size="{size:g}px"{weight}>{text}</text>'
     svg = CREDIT_TEXT.sub(credit, svg)
+    def chord(m: re.Match) -> str:
+        pieces = CHORD_PIECE.findall(m.group(2))
+        if not pieces:
+            return m.group(0)
+        size = next((size for music, size, _ in pieces if not music), pieces[0][1])
+        text = "".join("".join(CHORD_ACCIDENTALS.get(c, c) for c in piece) for _, _, piece in pieces)
+        return f'{m.group(1)}font-size="{size}px">{text}</text>'
+    svg = CHORD_TEXT.sub(chord, svg)
     return HEBREW_TEXT.sub(flip, svg)
 
 

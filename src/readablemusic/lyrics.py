@@ -64,14 +64,22 @@ def drop_stray_lines(score: m21.stream.Score) -> m21.stream.Score:
 def close_words(part: m21.stream.Part) -> None:
     """End words that OCR left open, which engravers draw as hyphens up to the next syllable.
 
-    'pa...' with an extension line is often read as the start of a word.
+    'pa...' with an extension line is often read as the start of a word. A word that goes on
+    in another voice (the alto's, after a chord both parts sang) ends in a printed hyphen,
+    since the engraver draws hyphens only between syllables of one voice.
     """
-    verses: dict[int, list[m21.note.Lyric]] = {}
+    verses: dict[int, list[tuple[m21.note.Lyric, str]]] = {}
     for n in part.recurse().notes:
+        voice = str(n.activeSite.id) if isinstance(n.activeSite, m21.stream.Voice) else "1"
         for lyric in n.lyrics:
-            verses.setdefault(lyric.number, []).append(lyric)
+            verses.setdefault(lyric.number, []).append((lyric, voice))
     for lyrics in verses.values():
-        for lyric, after in zip(lyrics, lyrics[1:] + [None]):
-            if lyric.syllabic in OPEN and (lyric.text.endswith(("...", "…", "_"))
-                                           or after is None or after.syllabic not in ("middle", "end")):
+        for (lyric, voice), (after, other) in zip(lyrics, lyrics[1:] + [(None, None)]):
+            if lyric.syllabic not in OPEN:
+                continue
+            if lyric.text.endswith(("...", "…", "_")) or after is None or after.syllabic not in ("middle", "end"):
                 lyric.syllabic = "single" if lyric.syllabic == "begin" else "end"
+            elif other != voice:
+                lyric.text += "-"
+                lyric.syllabic = "single" if lyric.syllabic == "begin" else "end"
+                after.syllabic = "begin" if after.syllabic == "middle" else "single"

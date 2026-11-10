@@ -1,5 +1,5 @@
 """Ask Claude what the first page of a score shows: each staff's clef on the first system,
-the key and time signatures, and the credits.
+the key and time signatures, the credits and the footnotes.
 
 Recognition can misread a handwritten clef, miss a key or time signature, or drop the small
 8 under a tenor's treble clef, and each such mistake spoils every note of a part. Claude
@@ -44,7 +44,10 @@ Report what is printed there, not what convention would suggest:
 - The time signature at the start as "beats/beat-type" (common time C is "4/4", cut time is
   "2/2"), or "" if none is printed.
 - The credits printed on the page: title, subtitle, composer (music), lyricist (words),
-  arranger, as written on the page and without their labels ("" if absent)."""
+  arranger, as written on the page and without their labels ("" if absent).
+- Any other text printed on the page outside the music, such as footnotes, sources and
+  copyright lines, each paragraph as written. Leave out page numbers, part names and the
+  text within the music (lyrics, chord symbols, tempo and other directions)."""
 
 SCHEMA = {
     "type": "object",
@@ -57,8 +60,9 @@ SCHEMA = {
         "fifths": {"type": "integer"},
         "time": {"type": "string"},
         **{kind: {"type": "string"} for kind in CREDIT_KINDS},
+        "notes": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["staves", "fifths", "time", *CREDIT_KINDS],
+    "required": ["staves", "fifths", "time", *CREDIT_KINDS, "notes"],
     "additionalProperties": False,
 }
 
@@ -69,9 +73,11 @@ class Reading:
     fifths: int
     time: str  # "3/8", or "" if none is printed
     credits: dict[str, str]  # kind -> text, for the kinds printed
+    notes: tuple[str, ...] = ()  # footnotes, sources, copyright
 
     def items(self, page: int) -> list[Item]:
-        return [Item(kind, text, page, (0, 0, 0, 0), 0) for kind, text in self.credits.items()]
+        return [Item(kind, text, page, (0, 0, 0, 0), 0) for kind, text in self.credits.items()] + \
+            [Item("note", text, page, (0, 0, 0, 0), 0) for text in self.notes]
 
 
 def system_start(sheet: str) -> tuple[int, tuple[int, int, int, int]] | None:
@@ -138,7 +144,8 @@ def ask(page: Image.Image, omr: Path, log=print) -> Reading | None:
         cost = (response.usage.input_tokens * 4 + response.usage.output_tokens * 20) / 1e6
         log(f"Claude read the first page (${cost:.3f})")
         return Reading([s["clef"] for s in answer["staves"]], answer["fifths"], answer["time"],
-                       {kind: answer[kind].strip() for kind in CREDIT_KINDS if answer[kind].strip()})
+                       {kind: answer[kind].strip() for kind in CREDIT_KINDS if answer[kind].strip()},
+                       tuple(" ".join(n.split()) for n in answer["notes"] if n.strip()))
     except Exception as e:  # the score is complete without this step
         log(f"Could not ask Claude about the first page: {e}")
         return None
@@ -175,12 +182,25 @@ def corrections(xml: str, reading: Reading) -> tuple[dict[str, str], int | None,
 
 
 def correct(musicxml: Path, reading: Reading) -> str:
-    """Read the score again where Claude saw other clefs, key or time; say what changed."""
-    xml = musicxml.read_text(encoding="utf-8")
+    """Read the score (MusicXML, or Audiveris's compressed .mxl) again where Claude saw other
+    clefs, key or time; say what changed."""
+    name = None
+    if musicxml.suffix == ".mxl":
+        with zipfile.ZipFile(musicxml) as z:
+            name = next(n for n in z.namelist() if n.endswith(".xml") and not n.startswith("META-INF"))
+            xml = z.read(name).decode("utf-8")
+    else:
+        xml = musicxml.read_text(encoding="utf-8")
     clefs, fifths, time = corrections(xml, reading)
     if not (clefs or fifths is not None or time):
         return ""
-    musicxml.write_text(reread(xml, clefs, fifths, time), encoding="utf-8")
+    if name:
+        with zipfile.ZipFile(musicxml, "w", zipfile.ZIP_DEFLATED) as z:
+            z.writestr(name, reread(xml, clefs, fifths, time))
+            z.writestr("META-INF/container.xml", '<?xml version="1.0" encoding="UTF-8"?><container>'
+                       f'<rootfiles><rootfile full-path="{name}"/></rootfiles></container>')
+    else:
+        musicxml.write_text(reread(xml, clefs, fifths, time), encoding="utf-8")
     done = [f"part {part} in {clef}" for part, clef in clefs.items()]
     done += [f"key {fifths:+d}"] if fifths is not None else []
     done += [f"time {time}"] if time else []

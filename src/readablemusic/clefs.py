@@ -77,8 +77,10 @@ def _is_stray(clef: m21.clef.Clef, measures: list, main: m21.clef.Clef, centre: 
     return abs(before - centre) - abs(after - centre) >= CLEF_GAIN
 
 
-def fix_clefs(score: m21.stream.Score) -> int:
-    """Reread stray clef runs under each part's main clef, in place; return how many runs."""
+def fix_clefs(score: m21.stream.Score, move: bool = True) -> int:
+    """Reread stray clef runs under each part's main clef, in place; return how many runs.
+    With move False the pitches are right (Claude read them off the page), and a short run
+    in another clef only takes the main clef's sign."""
     fixed = 0
     for part in score.parts:
         runs = [(clef, ms) for clef, ms in _runs(part) if clef is not None]
@@ -94,16 +96,18 @@ def fix_clefs(score: m21.stream.Score) -> int:
             continue
         centre = median(rest)
         for clef, measures in runs:
-            if _key(clef) == main_key or not _is_stray(clef, measures, main, centre):
+            if _key(clef) == main_key or not (_is_stray(clef, measures, main, centre) if move
+                                              else len(measures) <= MAX_STRAY_MEASURES):
                 continue
             steps = _bottom_line(main) - _bottom_line(clef)
-            for m in measures:
+            for m in measures if move else []:
                 key = m.getContextByClass(m21.key.KeySignature) or m21.key.KeySignature(0)
                 for n in _notes(m):
                     if isinstance(n, m21.chord.Chord):
                         n.pitches = tuple(moved(p, steps, key) for p in n.pitches)
                     elif isinstance(n, m21.note.Note):
                         n.pitch = moved(n.pitch, steps, key)
+            for m in measures:
                 for c in list(m.recurse().getElementsByClass(m21.clef.Clef)):
                     c.activeSite.replace(c, copy.deepcopy(main))
             fixed += 1
