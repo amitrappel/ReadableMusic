@@ -4,7 +4,7 @@ import statistics
 from pathlib import Path
 
 import pypdfium2 as pdfium
-from PIL import Image
+from PIL import Image, ImageOps
 
 from .scale import TARGET_INTERLINE, estimate_interline, staff_evidence
 
@@ -87,11 +87,13 @@ def _resize(img: Image.Image, k: float) -> Image.Image:
 
 
 def _load_image(path: Path) -> list[Image.Image]:
+    """The pages of an image file, turned upright: a phone often stores a photo on its side,
+    with a tag that says how to turn it."""
     pages = []
     with Image.open(path) as img:
         for frame in range(getattr(img, "n_frames", 1)):
             img.seek(frame)
-            pages.append(img.convert("L"))
+            pages.append(ImageOps.exif_transpose(img).convert("L"))
     return pages
 
 

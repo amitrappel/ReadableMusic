@@ -3,7 +3,7 @@ from pathlib import Path
 import pypdfium2 as pdfium
 from PIL import Image
 
-from readablemusic.pages import MAX_RENDER_PIXELS, _render, page_count
+from readablemusic.pages import MAX_RENDER_PIXELS, _load_image, _render, page_count
 
 
 def test_huge_declared_page_is_rendered_within_the_pixel_limit():
@@ -30,3 +30,11 @@ def test_page_count(tmp_path: Path):
     assert page_count(tmp_path / "a.pdf") == 2
     assert page_count(tmp_path / "a.png") == 1
     assert page_count(tmp_path / "a.tif") == 3
+
+
+def test_a_photo_stored_on_its_side_is_turned_upright(tmp_path: Path):
+    img = Image.new("L", (400, 300), 255)
+    exif = img.getexif()
+    exif[0x0112] = 6  # turn 90 degrees clockwise to view, as phones tag a portrait photo
+    img.save(tmp_path / "photo.jpg", exif=exif)
+    assert _load_image(tmp_path / "photo.jpg")[0].size == (300, 400)

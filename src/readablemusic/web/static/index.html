@@ -14,15 +14,22 @@
     <b>PDF</b>. You can fix the lyrics in your browser before downloading.</p>
   <form method="post" action="/jobs" enctype="multipart/form-data" id="upload">
     <label class="drop">
-      <input type="file" name="files" multiple required
+      <input type="file" name="files" id="files" multiple required
              accept=".pdf,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp,application/pdf,image/*">
       <span>Choose a PDF, or page images in page order</span>
     </label>
+    <p id="camera" hidden>
+      <label class="button">Photograph a page
+        <input type="file" id="photo" class="unseen" accept="image/*" capture="environment"></label>
+      <span class="small">One photo for each page, in order.</span>
+    </p>
+    <ol id="pages" class="pages" hidden></ol>
     <button type="submit">Convert</button>
   </form>
   <ul class="hints">
     <li>Printed music only. Lyrics in English for now.</li>
-    <li>Scan straight, at 300 DPI if you can. Phone photos work best flat and evenly lit.</li>
+    <li>Scan straight, at 300 DPI if you can. To photograph a page, lay it flat, hold the phone
+      straight above it so that the whole page fills the picture, and avoid shadows.</li>
     <li>Processing takes about a minute per page, 30 pages at most. Results are deleted after 24 hours.</li>
     <li>Upload only music you have the right to copy.</li>
   </ul>
@@ -33,8 +40,50 @@
     <a href="https://github.com/amitrappel/ReadableMusic/issues">Report a problem</a>.</p>
 </main>
 <script>
-  document.getElementById("upload").addEventListener("submit", e => {
-    const button = e.target.querySelector("button");
+  const $ = id => document.getElementById(id);
+  // The pages to upload: the files chosen, then each photo taken, in order. The form sends
+  // the file box, so it is given them all; a browser that cannot do so has only the box,
+  // which on a phone also offers the camera, one photo at a time.
+  let pages = [];
+  function show() {
+    const all = new DataTransfer();
+    pages.forEach(file => all.items.add(file));
+    $("files").files = all.files;
+    $("pages").replaceChildren(...pages.map((file, k) => {
+      const li = document.createElement("li");
+      if (file.type.startsWith("image/")) {
+        const img = document.createElement("img");
+        img.src = URL.createObjectURL(file);
+        img.alt = `Page ${k + 1}`;
+        li.append(img);
+      } else {
+        li.append(file.name);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", () => { pages.splice(k, 1); show(); });
+      li.append(remove);
+      return li;
+    }));
+    $("pages").hidden = !pages.length;
+  }
+  try {
+    new DataTransfer();
+    $("camera").hidden = !matchMedia("(pointer: coarse)").matches;  // a phone or tablet
+    $("files").addEventListener("change", () => { pages = [...$("files").files]; show(); });
+    $("photo").addEventListener("change", () => {
+      const file = $("photo").files[0];
+      if (file) {
+        const kind = file.type === "image/png" ? "png" : "jpg";
+        pages.push(new File([file], `photo-${pages.length + 1}.${kind}`, {type: file.type}));
+        show();
+      }
+      $("photo").value = "";
+    });
+  } catch (e) {}  // DataTransfer cannot be made here
+  $("upload").addEventListener("submit", e => {
+    const button = e.target.querySelector("button[type=submit]");
     button.disabled = true;
     button.textContent = "Uploading…";
   });
