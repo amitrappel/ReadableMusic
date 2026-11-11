@@ -234,11 +234,26 @@ def test_a_measure_holding_two_where_audiveris_missed_a_barline_is_split():
 def test_audiveris_pitch_is_kept_a_step_from_claudes_on_the_staff():
     # אתה הצבת, bar 22: Claude read E flat on the bottom line as D, and the C on its ledger line rightly.
     events = parse_voice("C4 8 [le-], F4 8, D4 8 [ját]", 24)
-    assert measured(events, ["D4 4.", "F4 4", "Eb4 4"], 30) == 1
+    assert measured({1: [events]}, {1: [parse_voice("D4 4., F4 4, Eb4 4", 24)]}, {1: 30}) == 1
     assert [ev["pitches"] for ev in events] == [["C4"], ["F4"], ["Eb4"]]
-    # Only where the notes pair off, and not for chords.
-    assert measured(parse_voice("C5 4, D5 16, C5 16", 24), ["D5 4", "C5 4"], 30) == 0
-    assert measured(parse_voice("G4+B4 4, C5 8", 24), ["A4 4", "C5 8"], 30) == 0
+    # Only where the notes pair off, and a chord only where it then clashes less.
+    assert measured({1: [parse_voice("C5 4, D5 16, C5 16", 24)]}, {1: [parse_voice("D5 4, C5 4", 24)]}, {1: 30}) == 0
+    assert measured({1: [parse_voice("G4+B4 4, C5 8", 24)]}, {1: [parse_voice("A4+C5 4, C5 8", 24)]}, {1: 30}) == 0
+
+
+def test_the_reading_that_clashes_less_with_the_other_voices_wins():
+    # האדון הרופא, bar 4: Claude read the alto's Eb4+G4 as D4+F4, under the sopranos' Eb5,
+    # on a staff Audiveris read in three voices.
+    alto = parse_voice("Gb4+Bb4 4, D4+F4 4", 24)
+    read = {1: [parse_voice("Eb5 4, Eb5 4", 24), alto], 2: [parse_voice("Bb3 2", 24)]}
+    drafted = {1: [parse_voice("Eb5 4, s 4", 24), parse_voice("G4+Bb4 4, Eb4+G4 4", 24), parse_voice("s 4, Eb5 4", 24)]}
+    assert measured(read, drafted, {1: 30, 2: 18}) == 2
+    assert [ev["pitches"] for ev in alto] == [["Gb4", "Bb4"], ["Eb4", "G4"]]
+    # Bar 8: Audiveris read the tenor's last Eb a step low, which clashes with the altos' C.
+    tenor = parse_voice("Db3 8, Eb3 8", 24)
+    read = {1: [parse_voice("Bb3+Ab4 8, C4+Ab4 8", 24)], 2: [tenor]}
+    assert measured(read, {2: [parse_voice("Db3 8, Db3 8", 24)]}, {1: 30, 2: 23}) == 0
+    assert tenor[1]["pitches"] == ["Eb3"]
 
 
 def test_claude_looks_again_at_measures_that_do_not_add_up():

@@ -1,4 +1,5 @@
-"""Web app: upload a scan, wait, correct the lyrics in the browser, download.
+"""Web app: upload a scan, wait, correct the lyrics in the browser, download. Where the scan
+looks too poor to read well, the job stops first and asks for a better one, or to go on.
 
 Run with `uv run readablemusic-web` and open http://127.0.0.1:8000.
 """
@@ -26,7 +27,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..engrave import line_breaks, to_pdf
 from ..pages import page_count
-from ..pipeline import transcribe
+from ..pipeline import PoorImage, transcribe
 from ..reread import CLEFS, reread
 from ..staves import restaff
 
@@ -46,6 +47,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 worker = ThreadPoolExecutor(max_workers=1)  # Audiveris uses all cores; one job at a time
 slots = threading.BoundedSemaphore(MAX_WAITING)
 recent_jobs: dict[str, list[float]] = defaultdict(list)
+answering = threading.Lock()  # one answer to a stopped job
 engraving = asyncio.Semaphore(1)  # a large score takes much memory and CPU
 
 
@@ -94,23 +96,26 @@ def isolated(fn, *args):
         return pool.submit(fn, *args).result()
 
 
-def convert(folder: Path, inputs: list[Path]) -> None:
-    results = transcribe(inputs, folder, log=lambda msg: None)
+def convert(folder: Path, inputs: list[Path], check: bool) -> None:
+    results = transcribe(inputs, folder, log=lambda msg: None, check=check)
     if not results:
         raise RuntimeError("No music was recognised on these pages.")
     shutil.copy(results[0], folder / "score.musicxml")
     to_pdf(folder / "score.musicxml", folder / "score.pdf")
 
 
-def run_job(folder: Path, inputs: list[Path]) -> None:
+def run_job(folder: Path, inputs: list[Path], check: bool = True) -> None:
     set_status(folder, "running")
     start = time.time()
     try:
-        isolated(convert, folder, inputs)
+        isolated(convert, folder, inputs, check)
         set_status(folder, "done")
         shutil.rmtree(folder / "input", ignore_errors=True)  # the corrections only need the score
         shutil.rmtree(folder / "work", ignore_errors=True)
         print(f"Job {folder.name} done in {time.time() - start:.0f} s", flush=True)
+    except PoorImage as e:  # the input stays for an answer
+        set_status(folder, "poor", problems=e.problems, cost=e.cost)
+        print(f"Job {folder.name} stopped in {time.time() - start:.0f} s: {' '.join(e.problems)}", flush=True)
     except Exception as e:
         traceback.print_exc()
         (folder / "error.log").write_text(traceback.format_exc(), encoding="utf-8")
@@ -206,6 +211,20 @@ def job_page(job: str):
 @app.get("/api/jobs/{job}")
 def job_status(job: str):
     return json.loads((job_dir(job) / "status.json").read_text(encoding="utf-8"))
+
+
+@app.post("/api/jobs/{job}/anyway")
+def read_anyway(job: str):
+    """Convert the pages of a job stopped as too poor to read well, as they are."""
+    folder = job_dir(job)
+    with answering:
+        if json.loads((folder / "status.json").read_text(encoding="utf-8"))["state"] != "poor":
+            raise HTTPException(409, "This conversion is not waiting for an answer")
+        if not slots.acquire(blocking=False):
+            raise HTTPException(503, "The server is busy; please try again in a few minutes.")
+        set_status(folder, "queued")
+    worker.submit(run_job, folder, sorted((folder / "input").iterdir()), False)
+    return {"queued": True}
 
 
 @app.get("/jobs/{job}/score.{ext}")

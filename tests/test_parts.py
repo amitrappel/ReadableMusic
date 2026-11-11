@@ -1,6 +1,6 @@
 import music21 as m21
 
-from readablemusic.parts import Sound, Voice, align, name_key, standardize_names, voice_type
+from readablemusic.parts import Sound, Voice, align, merge_parts, name_key, standardize_names, voice_type
 
 
 def voices(*names):
@@ -186,3 +186,17 @@ def test_an_unnamed_lowest_voice_is_the_bass_however_high_it_sings():
                               _part(_voice("Voice"), "E3", "C4", clef=m21.clef.BassClef())])
     standardize_names(score)
     assert score.parts[1].partName == "Bass"
+
+
+def test_hairpins_are_kept_with_the_slurs():
+    # האדון הרופא, bar 11: Audiveris read the bass's diminuendo, which merging lost.
+    def score():
+        notes = [m21.note.Note("C3", quarterLength=2) for _ in range(2)]
+        part = m21.stream.Part([m21.stream.Measure(notes)])
+        part.partName = "B."
+        part.insert(0, m21.dynamics.Diminuendo(notes))
+        return m21.stream.Score([part])
+    def wedges(merged):
+        return [len(w.getSpannedElements()) for w in merged.recurse().getElementsByClass(m21.dynamics.Diminuendo)]
+    assert wedges(merge_parts(score(), slurs=True)) == [2]
+    assert wedges(merge_parts(score())) == []

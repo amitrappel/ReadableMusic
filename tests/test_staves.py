@@ -2,7 +2,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from readablemusic.staves import TENOR, TREBLE, BASS, Voice, groups, restaff
+from readablemusic.staves import TENOR, TREBLE, BASS, Voice, groups, print_accidentals, restaff
 
 HEAD = '<?xml version="1.0" encoding="utf-8"?>\n'
 
@@ -90,3 +90,18 @@ def test_neighbours_in_one_clef_share_a_staff_first():
     assert groups(satb[:2] + satb[3:], 2) == [[0, 1], [2]]  # S A | B
     with pytest.raises(ValueError):
         groups(satb, 1)
+
+
+def test_a_flat_tied_over_the_barline_is_printed_again_on_the_next_note():
+    # האדון הרופא, bar 2: the bass's C flat tied into the measure, then C flat, C flat, C.
+    def n(step, alter, tie=None, sign=None):
+        return (f"<note><pitch><step>{step}</step>{f'<alter>{alter}</alter>' if alter else ''}<octave>4</octave></pitch>"
+                f"<duration>1</duration>{f'<tie type={chr(34)}{tie}{chr(34)}/>' if tie else ''}<voice>1</voice>"
+                f"<type>quarter</type>{f'<accidental>{sign}</accidental>' if sign else ''}</note>")
+    xml = HEAD + ('<score-partwise version="4.0"><part-list><score-part id="P1"><part-name>Bass</part-name></score-part>'
+                  '</part-list><part id="P1"><measure number="1"><attributes><divisions>1</divisions><key><fifths>-4</fifths>'
+                  f'</key></attributes>{n("C", 0)}{n("D", -1)}{n("E", -1)}{n("C", -1, "start", "flat")}</measure>'
+                  f'<measure number="2">{n("C", -1, "stop")}{n("C", -1)}{n("C", -1)}{n("C", 0)}</measure></part></score-partwise>')
+    out = ET.fromstring(print_accidentals(xml)[len(HEAD):])
+    assert [[x.findtext("accidental") for x in m.iter("note")] for m in out.iter("measure")] == \
+        [[None, None, None, "flat"], [None, "flat", None, "natural"]]

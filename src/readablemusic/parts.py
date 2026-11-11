@@ -167,8 +167,9 @@ def _is_percussion(part: m21.stream.Part) -> bool:
 
 def merge_parts(score: m21.stream.Score, drop_percussion: bool = True, slurs: bool = False) -> m21.stream.Score:
     """One part per voice from Audiveris's parts, which follow the staves of each system.
-    The slurs are kept only with slurs, for Claude's reading of a scan; Audiveris's own,
-    on notation programs' PDFs, have never been checked."""
+    The slurs and hairpins are kept only with slurs, for Claude's reading of a scan, whose
+    slurs are Claude's and hairpins Audiveris's (האדון הרופא, bar 11); Audiveris's own on
+    notation programs' PDFs have never been checked."""
     parts = list(score.parts)
     measures = [list(p.getElementsByClass(m21.stream.Measure)) for p in parts]
     starts = _system_starts(parts[0])
@@ -231,13 +232,14 @@ def merge_parts(score: m21.stream.Score, drop_percussion: bool = True, slurs: bo
 
 
 def _copy_slurs(parts: list[m21.stream.Part], copies: dict, out: m21.stream.Score) -> None:
-    """Slur the copied notes as their originals are; like brackets, slurs are held by the parts."""
+    """Slur the copied notes, and give them hairpins, as their originals have; like
+    brackets, these are held by the parts."""
     owner = {id(n): part for part in out.parts for n in part.recurse().notesAndRests}
     for part in parts:
-        for slur in part.recurse().getElementsByClass(m21.spanner.Slur):
-            notes = [copies.get(id(n)) for n in slur.getSpannedElements()]
+        for spanner in part.recurse().getElementsByClass((m21.spanner.Slur, m21.dynamics.DynamicWedge)):
+            notes = [copies.get(id(n)) for n in spanner.getSpannedElements()]
             if notes and all(notes) and len({id(owner.get(id(n))) for n in notes}) == 1 and id(notes[0]) in owner:
-                owner[id(notes[0])].insert(0, m21.spanner.Slur(notes))
+                owner[id(notes[0])].insert(0, type(spanner)(notes))
 
 
 def _copy_endings(parts: list[m21.stream.Part], measures: list[list], out: m21.stream.Score) -> None:

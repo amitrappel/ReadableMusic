@@ -7,7 +7,8 @@ lower one is voice 2 where that is printed, and elsewhere voice 1's bottom notes
 single notes, which both sing. Two voices put on one staff become voices 1 and 2, stems up
 and down, and the lower keeps only the words the upper does not sing at the same time, on
 lines of their own. Neighbours that read in one clef share a staff first, from the bottom:
-SATB on two staves is S A | T B, on three S | A | T B.
+SATB on two staves is S A | T B, on three S | A | T B. Each staff then prints the
+accidentals its notes call for (print_accidentals, which the pipeline also runs).
 """
 
 import copy
@@ -16,12 +17,13 @@ from dataclasses import dataclass
 from math import lcm
 
 from .reader import _onsets, _running
-from .reread import _element, _place
+from .reread import _element, _place, key_alters
 
 NOTE_ORDER = ["grace", "cue", "chord", "pitch", "unpitched", "rest", "duration", "tie", "instrument", "footnote",
               "level", "voice", "type", "dot", "accidental", "time-modification", "stem", "notehead",
               "notehead-text", "staff", "beam", "notations", "lyric", "play", "listen"]
 SEMITONES = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+SIGNS = {-2: "flat-flat", -1: "flat", 0: "natural", 1: "sharp", 2: "double-sharp"}
 ITEMS = ("direction", "harmony", "sound", "figured-bass")  # placed by their onset, in no voice
 BEAMED = ("eighth", "16th", "32nd", "64th", "128th")
 TREBLE, BASS, TENOR = ("G", "2", "0"), ("F", "4", "0"), ("G", "2", "-1")
@@ -519,4 +521,36 @@ def restaff(text: str, count: int) -> str:
     for p in parts:
         root.remove(p)
     root.extend(new_parts)
+    _print_accidentals(root)
+    return text[:start] + ET.tostring(root, encoding="unicode")
+
+
+def _print_accidentals(root: ET.Element) -> None:
+    for part in root.findall("part"):
+        key: dict[str, int] = {}
+        for m in part.findall("measure"):
+            if (fifths := m.findtext("attributes/key/fifths")) is not None:
+                key = key_alters(int(fifths))
+            state: dict[tuple, int] = {}  # (staff, step, octave) -> alteration in force
+            notes = [(t, k, n) for k, (t, n) in enumerate(_onsets(m)) if n.tag == "note" and n.find("pitch") is not None]
+            for _, _, n in sorted(notes, key=lambda x: x[:2]):
+                if n.find("tie[@type='stop']") is not None:
+                    continue
+                p = n.find("pitch")
+                alter, place = round(float(p.findtext("alter") or 0)), (n.findtext("staff") or "1", p.findtext("step"), p.findtext("octave"))
+                if alter != state.get(place, key.get(place[1], 0)) and n.find("accidental") is None and alter in SIGNS:
+                    sign = ET.Element("accidental")
+                    sign.text = SIGNS[alter]
+                    _insert(n, sign)
+                state[place] = alter
+
+
+def print_accidentals(text: str) -> str:
+    """Print the accidentals that a score of MusicXML text lacks: where neither the key nor
+    an earlier note on that line or space of the staff in the measure gives a note its
+    alteration. A note tied over the barline keeps its own without one, but the notes after
+    it do not: Audiveris printed a C flat's flat only before the tie (האדון הרופא, bar 2)."""
+    start = text.index("<score-partwise")
+    root = ET.fromstring(text[start:])
+    _print_accidentals(root)
     return text[:start] + ET.tostring(root, encoding="unicode")

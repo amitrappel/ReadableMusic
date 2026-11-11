@@ -21,8 +21,9 @@ Each system is turned level first. Claude also marks fermatas and slurs. Its rea
 then checked against Audiveris's:
 - a measure that adds up to two bars is split (a barline missed);
 - a voice that does not add up to the time signature is shown to Claude for a second look;
-- a lone note a step from Audiveris's lone note on the staff takes Audiveris's pitch, which
-  measures heads against the lines that Claude judges by eye (אתה הצבת).
+- a note or chord a step from Audiveris's on the staff takes Audiveris's pitches, which
+  measure heads against the lines that Claude judges by eye (אתה הצבת), unless they clash
+  more with the other voices (האדון הרופא).
 
 About 7 cents a system; runs only with ANTHROPIC_API_KEY. Any failure keeps Audiveris's reading.
 """
@@ -68,13 +69,7 @@ DYNAMICS = re.compile(r"p{1,4}|f{1,4}|mp|mf|sf|sfz|sfp|fp|fz|rfz")
 REHEARSAL = re.compile(r"[A-Z]\d?")  # a boxed letter; Claude lists chord symbols apart
 SIGNS = {"𝄋": "segno", "𝄌": "coda"}  # which the text font lacks
 
-PROMPT = """The image shows one system of an a cappella choir score. Below is an optical
-music recognition draft of it, which has mistakes: notes a step off, missed ties, dots,
-flags, triplets, notes missed or invented, and lyrics misread, missed or made up from
-other text. Read the image carefully and write out the whole system again, correcting the
-draft.
-
-Format, one string per voice: events separated by ", ". An event is pitches, a duration and
+FORMAT = """Format, one string per voice: events separated by ", ". An event is pitches, a duration and
 the syllables sung on it:
 - pitches: sounding pitches with the key signature and accidentals applied, e.g. "F#4",
   "Bb3" (an accidental holds for later notes on its line or space to the end of the
@@ -94,15 +89,19 @@ the syllables sung on it:
   End a syllable with "-" when its word goes on to the next syllable; leave out verse
   numbers. Leave out the brackets where no syllable starts.
 Example: "G4+B4 2~( [hamb'|march-], G4+B4 8), F#4+A4 8.^ [e-|ing], r 4t, D4 4t, D4 4t~"
+"""
 
-Look at every stem. A staff has one voice, or two where its parts are drawn apart: then
+STEMS = """Look at every stem. A staff has one voice, or two where its parts are drawn apart: then
 voice 1 has the stems up and voice 2 the stems down, with "s" where a voice prints nothing.
 Every voice of a measure must add up to the same length (the time signature; the first
-measure may be a shorter pickup). Keep the draft's measures and staves; where a measure
-of the draft holds two on the page (it missed a barline), write both into it. Put each
-syllable on the voice whose notes it is printed under, on voice 1 when both voices sing it.
+measure may be a shorter pickup)."""
 
-Also list:
+SYLLABLES = """Put each syllable on the voice whose notes it is printed under, on voice 1 when both
+voices sing it. Copy a syllable in Hebrew letters as written, without adding vowel points,
+its letters in the order they are read; it ends with "-" when its word goes on, whichever
+side of it the hyphen is drawn."""
+
+ALSO = """Also list:
 - every chord symbol printed above the staves ("G", "D7", "Bbm7/Ab"), as printed;
 - every other word or mark printed in the music, as printed: dynamics ("p", "mf"), tempo
   and expression ("Slowly", "rit."), instructions ("Last time, end"), with the staff it
@@ -118,7 +117,19 @@ Also list:
 - the repeat signs, barlines with two dots: the measure, and whether it starts a repeated
   passage (dots after the barline) or ends one (dots before it).
 Give each position as the measure and the quarter notes from its start (0 at the start,
-1.5 halfway through the second quarter).
+1.5 halfway through the second quarter)."""
+
+PROMPT = f"""The image shows one system of an a cappella choir score. Below is an optical
+music recognition draft of it, which has mistakes: notes a step off, missed ties, dots,
+flags, triplets, notes missed or invented, and lyrics misread, missed or made up from
+other text. Read the image carefully and write out the whole system again, correcting the
+draft.
+
+{FORMAT}
+{STEMS} Keep the draft's measures and staves; where a measure of the draft holds two on
+the page (it missed a barline), write both into it. {SYLLABLES}
+
+{ALSO}
 
 Draft:
 """
@@ -400,7 +411,8 @@ def _note(ev: dict, voice: int, pitch: str | None, chord: bool, tie_stop: bool, 
 
 def _printed(voices: list[list[dict]], tied_in: dict[int, set], fifths: int) -> set[tuple[int, int, str]]:
     """(voice, event, pitch) of the notes that need a printed accidental: the key and the
-    notes before them in the measure do not give their alteration."""
+    notes before them in the measure do not give their alteration. A note tied over the
+    barline keeps its alteration without one, for itself only."""
     key = key_alters(fifths)
     notes = []  # (onset, voice, event, pitch, tied from the note before)
     for v, events in enumerate(voices, 1):
@@ -413,7 +425,9 @@ def _printed(voices: list[list[dict]], tied_in: dict[int, set], fifths: int) -> 
     for t, v, k, pitch, tied in sorted(notes):
         step, alter, octave = re.fullmatch(r"([A-G])(##|#|bb|b)?(\d)", pitch).groups()
         place, alter = (step, octave), ALTER[alter or ""]
-        if not tied and alter != state.get(place, key.get(step, 0)):
+        if tied:
+            continue
+        if alter != state.get(place, key.get(step, 0)):
             out.add((v, k, pitch))
         state[place] = alter
     return out
@@ -660,16 +674,17 @@ def _rescale(root: ET.Element) -> None:
                         el.text = str(int(el.text) * k)
 
 
-def _ask(client, image: Image.Image, text: str, log, answer: dict | None = None, wrong: list[str] = ()) -> dict | None:
+def _ask(client, image: Image.Image, text: str, log, answer: dict | None = None, wrong: list[str] = (),
+         prompt: str = PROMPT, schema: dict = SCHEMA) -> dict | None:
     """Claude's reading of a system; with answer and what is wrong in it, its second look."""
-    messages = [{"role": "user", "content": [_image(image), {"type": "text", "text": PROMPT + text}]}]
+    messages = [{"role": "user", "content": [_image(image), {"type": "text", "text": prompt + text}]}]
     if answer:
         messages += [{"role": "assistant", "content": json.dumps({k: v for k, v in answer.items() if k != "cost"},
                                                                  ensure_ascii=False)},
                      {"role": "user", "content": AGAIN + "\n".join(wrong)}]
     response = client.messages.create(
         model=MODEL, max_tokens=32000, messages=messages,
-        output_config={"format": {"type": "json_schema", "schema": SCHEMA}})
+        output_config={"format": {"type": "json_schema", "schema": schema}})
     cost = (response.usage.input_tokens * 4 + response.usage.output_tokens * 20) / 1e6
     if response.stop_reason != "end_turn":
         log(f"Claude did not read a system ({response.stop_reason}, ${cost:.3f})")
@@ -698,22 +713,69 @@ def _step(pitch: str) -> int:
     return "CDEFGAB".index(pitch[0]) + 7 * int(pitch[-1])
 
 
-def measured(events: list[dict], drafted: list[str], bottom: int) -> int:
-    """Take the draft's pitch for a lone note of Claude's one step from the draft's lone
-    note, on the staff: Audiveris measures a head against the staff lines, which Claude
-    judges by eye, and in אתה הצבת it was right in all 11 such notes. Not on ledger lines,
-    where Audiveris read a C drawn close to the staff as D. Claude's events and the draft's
-    are paired in order, when there are as many. Return the notes changed."""
-    drafted = [e.split(" ")[0].split("+") for e in drafted if e.split(" ")[0] not in ("r", "s")]
-    sounding = [ev for ev in events if ev["pitches"]]
-    if len(sounding) != len(drafted):
-        return 0
+def _class(pitch: str) -> int:
+    step, alter, _ = re.fullmatch(r"([A-G])(##|#|bb|b)?(\d)", pitch).groups()
+    return ([0, 2, 4, 5, 7, 9, 11]["CDEFGAB".index(step)] + ALTER[alter or ""]) % 12
+
+
+def _clashes(pitches: list[str], others: list[str]) -> int:
+    """Pairs a semitone apart, or a seventh or ninth that is one."""
+    return sum(min(d := (_class(a) - _class(b)) % 12, 12 - d) == 1 for a in pitches for b in others)
+
+
+def _timed(voices: list[list[dict]]) -> list[tuple[int, int, dict]]:
+    """(onset, end, event) of the voices' events with notes."""
+    out = []
+    for events in voices:
+        t = 0
+        for ev in events:
+            if ev["pitches"]:
+                out.append((t, t + ev["duration"], ev))
+            t += ev["duration"]
+    return out
+
+
+def _pairs(ours: list[list[dict]], theirs: list[list[dict]]) -> list[tuple[dict, list[str]]]:
+    """Claude's events on a staff with the draft's pitches for each: in order, where the staff
+    has one voice in both with as many events; else the draft's one event at the same time
+    with as many notes."""
+    if len(ours) == len(theirs) == 1:
+        a, b = [ev for ev in ours[0] if ev["pitches"]], [ev["pitches"] for ev in theirs[0] if ev["pitches"]]
+        return list(zip(a, b)) if len(a) == len(b) else []
+    drafted = _timed(theirs)
+    out = []
+    for t, _, ev in _timed(ours):
+        found = [d["pitches"] for u, _, d in drafted if u == t and len(d["pitches"]) == len(ev["pitches"])]
+        if len(found) == 1:
+            out.append((ev, found[0]))
+    return out
+
+
+def measured(read: dict[int, list[list[dict]]], drafted: dict[int, list[list[dict]]], bottoms: dict[int, int]) -> int:
+    """Take the draft's pitches for an event of Claude's (staff -> voices) whose notes are
+    each one step from the draft's, all one way, on the staff: Audiveris measures heads
+    against the staff lines, which Claude judges by eye, and in אתה הצבת it was right in all
+    11 lone notes. Not on ledger lines, where Audiveris read a C drawn close to the staff as
+    D. The reading wins that clashes less with the other notes sounding then (a semitone, or
+    a seventh or ninth that is one): Claude read an alto's chord a step low (האדון הרופא,
+    bar 4), Audiveris a tenor's head with a tie under it (bar 8). Where they clash as much,
+    a lone note on a staff of one voice takes the draft's pitch. Return the notes changed."""
+    timed = [(t, end, ev) for vs in read.values() for t, end, ev in _timed(vs)]
     changed = 0
-    for ev, theirs in zip(sounding, drafted):
-        if len(ev["pitches"]) == len(theirs) == 1 and abs(_step(ev["pitches"][0]) - _step(theirs[0])) == 1 \
-                and any(bottom <= _step(x) <= bottom + 8 for x in (ev["pitches"][0], theirs[0])):
-            ev["pitches"] = theirs
-            changed += 1
+    for s, vs in read.items():
+        lone, bottom = len(vs) == len(drafted.get(s, [])) == 1, bottoms[s]
+        for ev, theirs in _pairs(vs, drafted.get(s, [])):
+            ours, theirs = sorted(ev["pitches"], key=_step), sorted(theirs, key=_step)
+            if len(ours) != len(theirs) or {_step(b) - _step(a) for a, b in zip(ours, theirs)} not in ({1}, {-1}) \
+                    or not all(bottom <= _step(x) <= bottom + 8 or bottom <= _step(y) <= bottom + 8
+                               for x, y in zip(ours, theirs)):
+                continue
+            t = next(t for t, _, e in timed if e is ev)
+            others = [p for u, end, e in timed if e is not ev and u <= t < end for p in e["pitches"]]
+            mine, draft = _clashes(ours, others), _clashes(theirs, others)
+            if draft < mine or (draft == mine and lone and len(ours) == 1):
+                ev["pitches"] = theirs
+                changed += len(ours)
     return changed
 
 
@@ -883,12 +945,16 @@ def apply(parts: list[ET.Element], systems: list[list[int]], answers: list[dict 
                 log(f"Measure {got['number']} kept as recognised: its voices do not add up")
                 continue
             read[k] = staves, voices
-    taken = 0
+    taken, bottoms = 0, [_bottoms(p) for p in parts]
     for k, (staves, voices) in read.items():
-        for s, vs in voices.items():
-            drafted = voices_of(parts[s - 1].findall("measure")[k], divisions[s - 1][k])
-            if len(vs) == 1 and len(drafted) == 1:
-                taken += measured(vs[0], next(iter(drafted.values())), _bottoms(parts[s - 1])[k])
+        drafted = {}
+        for s in voices:
+            d = divisions[s - 1][k]
+            try:
+                drafted[s] = [parse_voice(", ".join(v), d) for v in voices_of(parts[s - 1].findall("measure")[k], d).values()]
+            except ValueError:
+                drafted[s] = []
+        taken += measured(voices, drafted, {s: bottoms[s - 1][k] for s in voices})
     if taken:
         log(f"Kept {taken} pitch(es) of Audiveris's a step from Claude's")
     read, moved = split(parts, read, divisions)

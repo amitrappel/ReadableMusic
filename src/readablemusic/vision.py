@@ -1,5 +1,5 @@
 """Ask Claude what the first page of a score shows: each staff's clef on the first system,
-the key and time signatures, the credits and the footnotes.
+the key and time signatures, the credits and the footnotes, and how well it can be read.
 
 Recognition can misread a handwritten clef, miss a key or time signature, or drop the small
 8 under a tenor's treble clef, and each such mistake spoils every note of a part. Claude
@@ -34,6 +34,7 @@ MAX_IMAGE_BYTES = 3_500_000  # the API takes 5 MB an image after base64
 HEADER_ROOM = 14  # interlines after the staff start that hold a clef, 7 accidentals and a time
 MARGIN = 5  # interlines above and below the first system's staves
 CREDIT_KINDS = ("title", "subtitle", "composer", "lyricist", "arranger")
+LEGIBILITY = ("clear", "partly", "poor")
 
 PROMPT = """This is the first page of an a cappella choir score.
 Look at the first system of music on the page (the first group of staves sung together).
@@ -49,7 +50,13 @@ Report what is printed there, not what convention would suggest:
   arranger, as written on the page and without their labels ("" if absent).
 - Any other text printed on the page outside the music, such as footnotes, sources and
   copyright lines, each paragraph as written. Leave out page numbers, part names and the
-  text within the music (lyrics, chord symbols, tempo and other directions)."""
+  text within the music (lyrics, chord symbols, tempo and other directions).
+- How well the notes, rests and lyrics of the whole page can be read in this image:
+  "clear" if all of them for sure, "partly" if some not for sure, "poor" if many not. And
+  what in the image itself makes it hard, if anything, a few words each: blur, too few
+  pixels, part of the page cut off (such as the part names at the left), shadow or uneven
+  light, a steep angle, a fold or curl. Leave out what a better image would not change,
+  such as handwriting."""
 
 SCHEMA = {
     "type": "object",
@@ -63,8 +70,10 @@ SCHEMA = {
         "time": {"type": "string"},
         **{kind: {"type": "string"} for kind in CREDIT_KINDS},
         "notes": {"type": "array", "items": {"type": "string"}},
+        "legibility": {"type": "string", "enum": list(LEGIBILITY)},
+        "problems": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["staves", "fifths", "time", *CREDIT_KINDS, "notes"],
+    "required": ["staves", "fifths", "time", *CREDIT_KINDS, "notes", "legibility", "problems"],
     "additionalProperties": False,
 }
 
@@ -76,6 +85,8 @@ class Reading:
     time: str  # "3/8", or "" if none is printed
     credits: dict[str, str]  # kind -> text, for the kinds printed
     notes: tuple[str, ...] = ()  # footnotes, sources, copyright
+    legibility: str = "clear"  # of the whole page, one of LEGIBILITY
+    problems: tuple[str, ...] = ()  # what in the image makes it hard to read
 
     def items(self, page: int) -> list[Item]:
         return [Item(kind, text, page, (0, 0, 0, 0), 0) for kind, text in self.credits.items()] + \
@@ -147,7 +158,8 @@ def ask(page: Image.Image, omr: Path, log=print) -> Reading | None:
         log(f"Claude read the first page (${cost:.3f})")
         return Reading([s["clef"] for s in answer["staves"]], answer["fifths"], answer["time"],
                        {kind: answer[kind].strip() for kind in CREDIT_KINDS if answer[kind].strip()},
-                       tuple(" ".join(n.split()) for n in answer["notes"] if n.strip()))
+                       tuple(" ".join(n.split()) for n in answer["notes"] if n.strip()),
+                       answer["legibility"], tuple(p.strip() for p in answer["problems"] if p.strip()))
     except Exception as e:  # the score is complete without this step
         log(f"Could not ask Claude about the first page: {e}")
         return None
@@ -197,7 +209,9 @@ def system_clefs(root: ET.Element, seen: list[str]) -> dict[str, str]:
 def corrections(xml: str, reading: Reading, scan: bool = False) -> tuple[dict[str, str], int | None, str | None]:
     """(part id -> clef, fifths, time) where the reading differs from the score: the clefs
     when the staves of the score's first measure match the first system's one for one (on a
-    scan, system_clefs), the key and time only when the score does not change them later."""
+    scan, system_clefs), the key and time only when the score does not change them later.
+    On a scan the key also where parts change it apart from each other, which is a misreading
+    (האדון הרופא: the tenor's flats missed on one system, the bass's on two)."""
     root = ET.fromstring(xml[xml.index("<score-partwise"):])
     staves = []  # (part id, or None for a part on several staves; its clef)
     for part in root.iter("part"):
@@ -216,6 +230,10 @@ def corrections(xml: str, reading: Reading, scan: bool = False) -> tuple[dict[st
     times = [f"{t.findtext('beats')}/{t.findtext('beat-type')}" for t in root.iter("time")]
     fifths = reading.fifths if (reading.fifths != (keys[0] if keys else 0) and len(set(keys)) <= 1
                                 and -7 <= reading.fifths <= 7) else None
+    changes = [{(k, m.findtext("attributes/key/fifths")) for k, m in enumerate(part.findall("measure"))
+                if k and m.findtext("attributes/key/fifths") is not None} for part in root.findall("part")]
+    if scan and changes and -7 <= reading.fifths <= 7 and set(keys) - {reading.fifths} and not set.intersection(*changes):
+        fifths = reading.fifths
     time = reading.time if (TIME.fullmatch(reading.time) and reading.time != (times[0] if times else "")
                             and len(set(times)) <= 1) else None
     return clefs, fifths, time

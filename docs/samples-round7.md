@@ -147,10 +147,13 @@ notes a step off, which the kept pitches mended. $0.30 for the 7 systems, one re
 ## Layout and staves
 
 Verovio put as many measures on a line as fit (14 of אתה הצבת) on margins of 3.5 mm. Now
-the margins are 20 mm at the sides, 15 at top and bottom, and a line holds 4 measures, or 3
-where four would take more than 80% of it at Verovio's natural spacing
+the margins are 20 mm at the sides, 15 at top and bottom, and the lines are broken where
+together they come nearest to each taking 60% of the line at Verovio's natural spacing
 (`engrave.line_breaks`, written into the MusicXML, so the editor, the PDF and the download
-agree). In the editor, **Staves** spreads the voices over more staves or gathers them onto
+agree). A first version put 4 measures on a line, or 3 where crowded: אתה הצבת's 3/8
+measures then took 11% to 30% of a line, stretched to three to nine times their width; now
+it has lines of 8, 8 and 9, האדון הרופא and Siyahamba 3 or 4. A line also tends to start at
+a rehearsal mark or a canon's entry (①②③ of אתה הצבת, every 8 measures). In the editor, **Staves** spreads the voices over more staves or gathers them onto
 fewer (`staves.py`): SATB on two staves is S A | T B, on three S | A | T B. Tried on
 Siyahamba and האדון הרופא, the only samples here with several voices.
 
@@ -176,14 +179,47 @@ Changes:
 - **Staves:** where two voices put on one staff sing other words at the same time, the
   lower's own go on lines below (the bass's "sha-ru" in bars 11–12).
 
+## האדון הרופא, the user's reading of bars 1–11
+
+| Bars | Mistake | Cause |
+|---|---|---|
+| 2, 4 | the alto's G flat and the bass's C flat without their flat on the second eighth | the flat was printed only before the tie into the bar, by Audiveris and in Claude's measures; the rule asks for it again on the next note |
+| 4–5 | the alto's E flat and G natural as D natural and F | Claude, a step low; Audiveris had them, but its pitches were taken only for lone notes on a staff of one voice |
+| 7 | no segno | Claude did not report it, before the prompt named it |
+| 7–18 | flats printed on the tenor's and the bass's E, D, A and B flats | Audiveris missed the key signature of the tenor on system 2 and of the bass on systems 3 and 4; Claude's measures were given accidentals against that key |
+| 8 | the tenor's last E flat as D, without its tie | Audiveris read the head a step low (a tie under it), and its pitch was taken |
+| 11 | no diminuendo in the bass | Audiveris read it; `merge_parts` dropped it, as it did slurs |
+
+Changes:
+
+- **Accidentals are printed where notation's rules ask for them** (`staves.print_accidentals`,
+  for every score and after Staves): a note tied over the barline keeps its alteration
+  without one, but the notes after it in the measure do not.
+- **On a scan, Claude's key holds throughout** where the parts change key apart from each
+  other.
+- **Audiveris's pitches a step from Claude's** are now weighed for chords and on staves of
+  two voices, paired by onset: the reading that clashes less with the notes sounding then (a
+  semitone, or a seventh or ninth that is one) wins; where they clash as much, a lone note on
+  a staff of one voice takes Audiveris's pitch, as before. Bar 4: Claude's D clashed with
+  the sopranos' and tenors' E flat; bar 8: Audiveris's D flat with the altos' C.
+- **Hairpins are kept** where slurs are.
+
+Tried without new questions, with Claude's answers from before; then system 2 was asked
+again for the segno ($0.09), which also moved the mf of bar 10 onto bar 9's last rest, where
+the page prints it.
+
 ## Still open
 
 - **Barlines Audiveris missed** are not mended; Claude could split a measure that adds up to
   two.
-- **`01 - אתה הצבת`:** bar 6's A natural and bar 9's fermata (above); lyric "of" for "ot"
-  in bar 13.
+- **`01 - אתה הצבת`:** bar 9's fermata (above). Run again on 2026-11-11 ($0.36): bar 6 is
+  now right, but bars 10 and 12 have E flat for the first D of their sixteenths, where
+  Audiveris's reading of the system (in bass clef, with chords) could not correct Claude.
+  "Kanon" above the first staff is missing.
 - **Claude reads differently each run.** Thinking, or two readings compared, may steady it,
   at two to three times the cost.
 - No sample scan has lyrics in Hebrew script, so Claude's reading of them is untested.
+- **האדון הרופא:** the diminuendo prints under the bass staff, not above it: music21 reads
+  Audiveris's `placement="above"` on a wedge as below.
 - **Memory:** the second reader loads the pages again for its crops; on the server, with a
   key, that doubles the pages held for a moment.

@@ -617,11 +617,37 @@ async function poll() {
       $("status").textContent = `Conversion failed: ${status.error}`;
       return;
     }
+    if (status.state === "poor") return askAnyway(status);
     $("status").textContent = status.state === "queued"
       ? "Waiting for another conversion to finish…"
       : `Reading the music, about a minute per page… (${seconds}s)`;
     await new Promise(r => setTimeout(r, 3000));
   }
 }
+
+function askAnyway(status) {
+  $("status").textContent = "Stopped before reading the music";
+  $("poor-problems").replaceChildren(...status.problems.map(text => {
+    const li = document.createElement("li");
+    li.textContent = text;
+    return li;
+  }));
+  $("poor-cost").textContent = status.cost === null
+    ? "Reading it anyway gives what recognition finds."
+    : `Reading it anyway has Claude read the music, at a cost of about $${status.cost.toFixed(2)}.`;
+  $("poor").hidden = false;
+}
+
+$("anyway").addEventListener("click", async () => {
+  $("anyway").disabled = true;
+  const response = await fetch(`/api/jobs/${job}/anyway`, {method: "POST", body: "{}"});
+  if (!response.ok) {
+    $("poor-cost").textContent = (await response.json().catch(() => ({}))).detail || `Failed (${response.status})`;
+    $("anyway").disabled = false;
+    return;
+  }
+  $("poor").hidden = true;
+  poll();
+});
 
 poll();

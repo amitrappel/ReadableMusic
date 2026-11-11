@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from readablemusic import audiveris, web
+from readablemusic.pipeline import PoorImage
 
 
 def png() -> bytes:
@@ -24,7 +25,7 @@ class Inline:
         fn(*args)
 
 
-def fake_transcribe(inputs, out_dir, log=print):
+def fake_transcribe(inputs, out_dir, log=print, check=False):
     note = m21.note.Note("C4", quarterLength=4)
     note.lyric = "hel"
     part = m21.stream.Part([m21.stream.Measure([note])])
@@ -93,6 +94,20 @@ def test_failure_message_hides_server_paths(client, monkeypatch):
 def test_inputs_are_deleted_after_a_successful_job(client, tmp_path):
     job = upload(client).headers["location"].rsplit("/", 1)[1]
     assert not (tmp_path / job / "input").exists()
+
+
+def test_a_poor_scan_stops_and_is_read_anyway_when_asked(client, monkeypatch, tmp_path):
+    def poor(inputs, out_dir, log=print, check=False):
+        if check:
+            raise PoorImage(["Blurred."], 0.32)
+        return fake_transcribe(inputs, out_dir)
+    monkeypatch.setattr(web, "transcribe", poor)
+    job = upload(client).headers["location"].rsplit("/", 1)[1]
+    assert client.get(f"/api/jobs/{job}").json() == {"state": "poor", "problems": ["Blurred."], "cost": 0.32}
+    assert (tmp_path / job / "input").is_dir()
+    assert client.post(f"/api/jobs/{job}/anyway", content=b"{}").json() == {"queued": True}
+    assert client.get(f"/api/jobs/{job}").json() == {"state": "done"}
+    assert client.post(f"/api/jobs/{job}/anyway", content=b"{}").status_code == 409
 
 
 def test_rejects_unreadable_files_and_too_many_pages(client, monkeypatch):

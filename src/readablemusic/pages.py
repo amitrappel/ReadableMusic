@@ -59,13 +59,25 @@ def load_pages(inputs: list[Path]) -> list[Image.Image]:
             images.extend(loaded)
             pages.extend(loaded)
     if images:
-        # One scale for all scanned pages, from the page with the most staff evidence:
-        # a mostly empty page gives an unreliable estimate.
-        interline, support = max(map(staff_evidence, images), key=lambda e: e[1])
-        k = min(max(TARGET_INTERLINE / interline, MIN_SCALE), MAX_SCALE) if support else 1.0
+        interline = image_interline(images)
+        k = min(max(TARGET_INTERLINE / interline, MIN_SCALE), MAX_SCALE) if interline else 1.0
         scaled = {id(img): _resize(img, k) for img in images}
         pages = [scaled.get(id(p), p) for p in pages]
     return [_resize(p, min(1.0, (MAX_PIXELS / (p.width * p.height)) ** 0.5)) for p in pages]
+
+
+def image_interline(images: list[Image.Image]) -> float | None:
+    """The interline of scanned or photographed pages, None without staves: one for all, from
+    the page with the most staff evidence, as a mostly empty page gives an unreliable estimate."""
+    interline, support = max(map(staff_evidence, images), key=lambda e: e[1])
+    return interline if support else None
+
+
+def uploaded_interline(inputs: list[Path]) -> float | None:
+    """The interline of the images among inputs at their own size, before load_pages scales
+    them; None without images or staves."""
+    images = [img for path in inputs if path.suffix.lower() != ".pdf" for img in _load_image(path)]
+    return image_interline(images) if images else None
 
 
 def _resize(img: Image.Image, k: float) -> Image.Image:

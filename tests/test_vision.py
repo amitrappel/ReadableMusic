@@ -58,6 +58,20 @@ def test_doubtful_readings_change_nothing():
     assert corrections(xml, Reading(["treble", "bass"], 3, "2/2", {})) == ({}, None, None)
 
 
+def test_on_a_scan_a_key_that_one_part_changes_is_claudes():
+    # האדון הרופא: Audiveris missed the tenor's flats on its second system.
+    second = '<measure number="2"><attributes><divisions>1</divisions>'
+    changed = second + "<key><fifths>0</fifths></key>"
+    xml = score(TREBLE, TENOR, key=-4)
+    at = xml.index('<part id="P2">')
+    one = xml[:at] + xml[at:].replace(second, changed)
+    seen = Reading(["treble", "treble-8"], -4, "4/4", {})
+    assert corrections(one, seen)[1] is None
+    assert corrections(one, seen, scan=True)[1] == -4
+    # A key that every part changes at once is printed.
+    assert corrections(xml.replace(second, changed), seen, scan=True)[1] is None
+
+
 def test_the_score_is_read_again(tmp_path):
     path = tmp_path / "score.musicxml"
     path.write_text(score(BASS, key=0), encoding="utf-8")

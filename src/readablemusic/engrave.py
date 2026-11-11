@@ -37,8 +37,10 @@ SYSTEM_GAP = 16  # least space between systems
 LYRIC_WORD_SPACE = 2.0
 MARGIN_MM = 20  # left and right
 MARGIN_TOP_MM = MARGIN_BOTTOM_MM = 15
-LINE_BARS = 4  # measures a line, or one fewer where they would be crowded
-CROWDED = 0.8  # share of a line that its measures may take at Verovio's natural spacing
+# Share of a line that its measures take at Verovio's natural spacing, which justification
+# stretches to the whole line: האדון הרופא's lines of four 4/4 measures take 0.5 to 0.7.
+FILL = 0.6
+MARK_COST = 0.03  # of a rehearsal mark or canon entry within a line: as much as a line 0.17 off FILL
 STAFF_LINE = re.compile(r'<path d="M(\d+) (\d+) L(\d+) \2"')  # horizontal; a measure draws its staff lines first
 
 TEXT_FONT = "DavidLibre"  # has both Latin and Hebrew letters
@@ -119,7 +121,7 @@ def _toolkit(staff_mm: float, bottom_mm: float = MARGIN_BOTTOM_MM, **options) ->
         "pageMarginTop": _units(MARGIN_TOP_MM, staff_mm),
         "pageMarginBottom": _units(bottom_mm, staff_mm),
         "breaks": "line",  # the lines of line_breaks; pages fill up
-        "minLastJustification": 0,  # a last line of 3 measures as wide as the lines of 4
+        "minLastJustification": 0,  # the last line as wide as the others
         "header": "encoded",  # the credits only: the Windows build garbles its page-number header
         "footer": "encoded",
         # Roomier than Verovio's defaults (12, 12, 4, 1.2), which crowd lyrics against the next staff.
@@ -143,29 +145,41 @@ def _measure_lines(tk: verovio.toolkit) -> list[tuple[int, int]]:
     return out
 
 
-def lines(first: list[int], inner: list[int], room: int) -> list[int]:
-    """How many measures go on each line: LINE_BARS, or one fewer where they would take
-    more than CROWDED of the room, and shorter lines only where nothing else fits or at
-    the end of a short score. first is a measure's width starting a line, with the part
-    names, clef and key, and inner its width within a line."""
+def lines(first: list[int], inner: list[int], room: int, marks: set[int] = frozenset()) -> list[int]:
+    """How many measures go on each line: the lines that together come nearest to each
+    taking FILL of the room at Verovio's natural spacing, so that a line holds more short
+    measures than long ones (8 of אתה הצבת's in 3/8, 4 of האדון הרופא's in 4/4), and of
+    equals the longer first. A line costs MARK_COST more for each of marks (measure
+    indices: rehearsal marks, a canon's entries) that it does not start with. first is a
+    measure's width starting a line, with the part names, clef and key, and inner its
+    width within a line."""
     n = len(first)
-    best: list[tuple[float, list[int]]] = [(0, [])] * (n + 1)
+    best: list[tuple[float, list[int]]] = [(0.0, [])] * (n + 1)
     for i in range(n - 1, -1, -1):
-        options = []
-        for size in range(min(LINE_BARS, n - i), 0, -1):
-            need = first[i] + sum(inner[i + 1:i + size])
-            cost = 1 if size >= LINE_BARS - 1 else 3 + LINE_BARS - size
-            cost += 2 if size == LINE_BARS and need > CROWDED * room else 0
-            cost += 10 if need > room and size > 1 else 0
-            options.append((cost + best[i + size][0], [size] + best[i + size][1]))
-        best[i] = min(options, key=lambda o: o[0])  # the first of equals: longer lines first
+        options, need = [], first[i]
+        for size in range(1, n - i + 1):
+            need += inner[i + size - 1] if size > 1 else 0
+            if need > room and size > 1:
+                break
+            cost = (need / room - FILL) ** 2 + MARK_COST * len(marks & set(range(i + 1, i + size)))
+            options.append((cost + best[i + size][0], -size, [size] + best[i + size][1]))
+        cost, _, sizes = min(options)
+        best[i] = (cost, sizes)
     return best[0][1]
 
 
+def _marks(parts: list[ET.Element]) -> set[int]:
+    """Indices of the measures with a rehearsal mark, or a circled number, which marks where
+    a voice of a canon comes in (reader.direction)."""
+    return {k for part in parts for k, m in enumerate(part.findall("measure"))
+            if m.find(".//rehearsal") is not None or any(w.get("enclosure") == "circle" for w in m.iter("words"))}
+
+
 def line_breaks(text: str, staff_mm: float = 5.0) -> str:
-    """Start a line every LINE_BARS measures, or one fewer where they would be crowded
-    (lines()), as print new-system marks in every part: Verovio's own layout puts as many
-    measures on a line as fit, up to 14 of אתה הצבת. Other system and page breaks go."""
+    """Break the lines where lines() chooses, as print new-system marks in every part:
+    Verovio's own layout puts as many measures on a line as fit, 14 of אתה הצבת, and four
+    to a line stretched them to three to five times their width. Other system and page
+    breaks go."""
     start = text.index("<score-partwise")
     root = ET.fromstring(text[start:])
     parts = root.findall("part")
@@ -195,7 +209,7 @@ def line_breaks(text: str, staff_mm: float = 5.0) -> str:
     if not len(first) == len(inner) == len(measures[0]):
         return plain
     starts, k = set(), 0
-    for size in lines(first, inner, 10 * _units(A4_MM[0] - 2 * MARGIN_MM, staff_mm)):
+    for size in lines(first, inner, 10 * _units(A4_MM[0] - 2 * MARGIN_MM, staff_mm), _marks(parts)):
         starts.add(k)
         k += size
     for ms in measures:

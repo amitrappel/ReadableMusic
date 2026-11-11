@@ -17,16 +17,19 @@ def score(measures: int) -> str:
             f'</score-part></part-list><part id="P1">{bars}</part></score-partwise>')
 
 
-def test_lines_hold_four_measures_or_three_where_four_are_crowded():
-    assert lines([10] * 8, [10] * 8, 100) == [4, 4]
-    assert lines([10] * 10, [10] * 10, 100) == [4, 3, 3]  # no line of two at the end
-    assert lines([10] * 5, [10] * 5, 100) == [3, 2]
-    assert lines([22] * 6, [22] * 6, 100) == [3, 3]  # four take 88% of the line
+def test_lines_hold_more_short_measures_than_long_ones():
+    assert lines([10] * 12, [10] * 12, 100) == [6, 6]
+    assert lines([5] * 24, [5] * 24, 100) == [12, 12]
+    assert lines([30] * 4, [30] * 4, 100) == [2, 2]
+    assert lines([60] * 3, [60] * 3, 100) == [1, 1, 1]  # two would not fit
+    # A line starts at a rehearsal mark or a canon's entry where that costs little.
+    assert lines([10] * 12, [10] * 12, 100, {5}) == [5, 7]
+    assert lines([10] * 12, [10] * 12, 100, {2}) == [6, 6]
 
 
-def test_lines_start_every_four_measures_and_other_breaks_go():
-    out = line_breaks(score(8))
+def test_lines_are_marked_and_other_breaks_go():
+    out = line_breaks(score(20))  # bars of a whole note each, ten to a line
     starts = [m.group(1) for m in re.finditer(r'<measure number="(\d+)">\s*<print new-system="yes"', out)]
-    assert starts == ["5"]
+    assert starts == ["11"]
     assert "new-page" not in out
     assert line_breaks(out) == out
