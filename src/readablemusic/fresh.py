@@ -6,11 +6,14 @@ but only 61 of some 250 notes, and a single measure of the last system, which it
 (4 systems on the page, 3 in its score). Here Audiveris gives only where the systems are:
 each is cut from the page down to the next, so that the image holds a staff Audiveris
 missed. Claude writes out the system's staves (label, clef, key, time) and its measures in
-reader.py's format, and the score is built as Audiveris exports one: a part for each staff
-of each system, shown only in its own, so that merge_parts gives the staves to voices by
-their labels and range. The notes then go in as Claude's reading of a draft does (apply).
+reader.py's format, with the hairpins, and the score is built as Audiveris exports one: a
+part for each staff of each system, shown only in its own, so that merge_parts gives the
+staves to voices by their labels and range. The notes then go in as Claude's reading of a
+draft does (apply). The edge of the photo cut off the labels ("…ss"), so Claude names the
+staves of all systems at once, from their left ends side by side.
 """
 
+import json
 import os
 import xml.etree.ElementTree as ET
 import zipfile
@@ -23,16 +26,18 @@ from PIL import Image
 
 from .chords import Chord
 from .reader import SCHEMA as DRAFTED
-from .reader import (ALSO, DIVISIONS, FORMAT, STEMS, SYLLABLES, _ask, _spaces, apply, doubts, level, page_systems,
-                     parse_voice, systems_of)
+from .reader import (ABOVE, ALSO, DIVISIONS, FORMAT, MODEL, STEMS, SYLLABLES, _ask, _image, _spaces, apply, doubts, level,
+                     page_systems, parse_voice, systems_of)
 from .reread import CLEFS, TIME
+from .scale import TARGET_INTERLINE
 from .vision import _shown
 
 PROMPT = f"""The image shows one system of an a cappella choir score, handwritten or printed, perhaps
 photographed at an angle. Read it carefully and write it out.
 
-First its staves, top to bottom: the part label printed at the left of the staff, as
-printed ("" if there is none, or only a piece cut off by the edge), its clef ("treble";
+First its staves, top to bottom: the part label printed at the left of the staff ("" if
+there is none; where the edge of the page cuts it off, the whole name it most likely is,
+from the letters left and the usual names of choir parts); its clef ("treble";
 "treble-8" with a small 8 below; "bass"; "alto"; or "other"), its key signature (positive
 for sharps, negative for flats, 0 for none) and the time signature printed at its start
 ("3/4", or "" if none is printed there). Then every measure of the system in order,
@@ -41,14 +46,35 @@ numbered from {{first}}, with the voices of each staff, the staves numbered from
 {FORMAT}
 {STEMS} {SYLLABLES}
 
-{ALSO}"""
+{ALSO}
+And every hairpin, a wedge that opens (crescendo) or closes (diminuendo): the staff it
+belongs to, the measure and quarters where it starts, and those where it ends."""
 
-SCHEMA = {**DRAFTED, "properties": {"staves": {"type": "array", "items": {
-    "type": "object",
-    "properties": {"label": {"type": "string"}, "clef": {"type": "string", "enum": [*CLEFS, "other"]},
-                   "fifths": {"type": "integer"}, "time": {"type": "string"}},
-    "required": ["label", "clef", "fifths", "time"], "additionalProperties": False}}, **DRAFTED["properties"]},
-    "required": ["staves", *DRAFTED["required"]]}
+NAMING = """The image shows, side by side from left to right, the left end of each system of an a
+cappella choir score in order: the clefs of its staves and their part labels, which the edge
+of the page may cut off. The systems have {} staves. Name the part of each staff, system
+by system, top to bottom: the whole name its label stands for, from the letters left and
+the usual names of choir parts, such as "Soprano 1", "Alto 2", "Tenor" or "Bass". The same
+label on two systems is the same part; a later system often shortens the names of the
+first. Give "" for a staff without a label."""
+NAMED = {"type": "object", "properties": {"systems": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}},
+         "required": ["systems"], "additionalProperties": False}
+LABEL_WIDTH = 0.12  # share of the page right of a system's left end that holds its labels and clefs
+
+SCHEMA = {**DRAFTED, "properties": {
+    "staves": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"label": {"type": "string"}, "clef": {"type": "string", "enum": [*CLEFS, "other"]},
+                       "fifths": {"type": "integer"}, "time": {"type": "string"}},
+        "required": ["label", "clef", "fifths", "time"], "additionalProperties": False}},
+    **DRAFTED["properties"],
+    "wedges": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"kind": {"type": "string", "enum": ["crescendo", "diminuendo"]}, "staff": {"type": "integer"},
+                       "measure": {"type": "string"}, "quarters": {"type": "number"},
+                       "last": {"type": "string"}, "end": {"type": "number"}},
+        "required": ["kind", "staff", "measure", "quarters", "last", "end"], "additionalProperties": False}}},
+    "required": ["staves", *DRAFTED["required"], "wedges"]}
 
 
 def poor(mxl: Path, omr: Path) -> str:
@@ -177,8 +203,52 @@ def build(answers: list[dict]) -> tuple[ET.Element, list[list[int]], list[dict],
         renumbered.append({**a, "measures": measures, "chords": moved(a["chords"], "measure"),
                            "texts": [{**t, "staff": t["staff"] + offset} for t in moved(a["texts"], "measure")
                                      if 1 <= t["staff"] <= staves[s]],
+                           "wedges": [{**w, "staff": w["staff"] + offset} for w in moved(a.get("wedges", []), "measure", "last")
+                                      if 1 <= w["staff"] <= staves[s]],
                            "endings": moved(a["endings"], "first", "last"), "repeats": moved(a["repeats"], "measure")})
     return root, systems, renumbered, owner
+
+
+def labels(sheets: list[Image.Image], places: list[tuple]) -> Image.Image:
+    """The left end of each system, with its clefs and part labels, side by side; each down
+    to the next system, as Audiveris can miss a staff."""
+    strips = []
+    for (sheet, width, (left, top, _, _), _), (_, _, (_, _, _, bottom), _) in             zip(places, bands(places, [page.height for page in sheets])):
+        page, k = sheets[sheet], sheets[sheet].width / width
+        d = TARGET_INTERLINE / k  # the pages are scaled to it; the box holds a margin of ABOVE
+        strips.append(page.crop((0, round((top + (ABOVE - 2) * d) * k), round((left + LABEL_WIDTH * width) * k),
+                                 round(bottom * k))))
+    out = Image.new("L", (sum(s.width for s in strips) + 20 * len(strips), max(s.height for s in strips)), 255)
+    x = 0
+    for strip in strips:
+        out.paste(strip.convert("L"), (x, 0))
+        x += strip.width + 20
+    return out
+
+
+def name_staves(client, image: Image.Image, answers: list[dict], log) -> float:
+    """Name the staves of all systems at once from their labels side by side, so that a
+    part keeps its name from system to system: read one system at a time, the "o2" left of
+    the edge of נערה במשקפים was now Alto 2, now Soprano 2. Return the cost."""
+    counts = ", ".join(str(len(a["staves"])) for a in answers)
+    try:
+        response = client.messages.create(
+            model=MODEL, max_tokens=8000,
+            messages=[{"role": "user", "content": [_image(image), {"type": "text", "text": NAMING.format(counts)}]}],
+            output_config={"format": {"type": "json_schema", "schema": NAMED}})
+        named = json.loads(next(b.text for b in response.content if b.type == "text"))["systems"]
+    except Exception as e:  # the names each system's reading gave stay
+        log(f"Claude could not name the staves: {e}")
+        return 0.0
+    cost = (response.usage.input_tokens * 4 + response.usage.output_tokens * 20) / 1e6
+    if [len(n) for n in named] != [len(a["staves"]) for a in answers]:
+        log(f"Claude named other staves than it read (${cost:.3f}); their names stay")
+        return cost
+    for names, a in zip(named, answers):
+        for name, staff in zip(names, a["staves"]):
+            staff["label"] = name.strip() or staff["label"]
+    log(f"Claude named the staves (${cost:.3f}): " + " | ".join(", ".join(n) for n in named))
+    return cost
 
 
 def read_fresh(mxl: Path, omr: Path, load_sheets: Callable[[], list[Image.Image]], log=print) -> tuple[set, list[Chord]]:
@@ -194,32 +264,37 @@ def read_fresh(mxl: Path, omr: Path, load_sheets: Callable[[], list[Image.Image]
         sheets = load_sheets()
         places = bands(page_systems(omr), [page.height for page in sheets])
         client = anthropic.Anthropic(timeout=600.0)
-        images, answers, first, cost = [], [], 1, 0.0
+        images, prompts, answers, first, cost = [], [], [], 1, 0.0
         for sheet, width, box, slope in places:
             page = sheets[sheet]
             image = level(page.crop(tuple(round(v * page.width / width) for v in box)), slope)
-            answer = _ask(client, image, "", log, prompt=PROMPT.replace("{first}", str(first)), schema=SCHEMA)
+            prompt = PROMPT.replace("{first}", str(first))
+            answer = _ask(client, image, "", log, prompt=prompt, schema=SCHEMA)
             if not answer or not answer["measures"]:
                 log(f"Claude could not read system {len(images) + len(answers) + 1}; it is left out")
                 continue
             cost += answer["cost"]
             images.append(image)
+            prompts.append(prompt)
             answers.append(answer)
             first += len(answer["measures"])
         if not answers:
             return set(), []
+        if len(answers) == len(places):
+            cost += name_staves(client, labels(sheets, page_systems(omr)), answers, log)
         root, systems, renumbered, owner = build(answers)
         # Where a voice does not add up, Claude looks again, keeping its measures and staves.
         again = 0
-        for s, (image, answer) in enumerate(zip(images, answers)):
+        for s, (image, prompt, answer) in enumerate(zip(images, prompts, answers)):
             own = [part for part, (system, _) in zip(root.findall("part"), owner) if system == s]
             numbers = {m["number"]: k for m, k in zip(answer["measures"], systems[s])}
             if (wrong := doubts(answer, own, numbers)):
                 again += 1
-                second = _ask(client, image, "", log, answer, wrong, PROMPT.replace("{first}", str(systems[s][0] + 1)), SCHEMA)
+                second = _ask(client, image, "", log, answer, wrong, prompt, SCHEMA)
                 if second and len(second["measures"]) == len(answer["measures"]) and len(second["staves"]) == len(answer["staves"]):
                     cost += second["cost"]
-                    answers[s] = {**second, "cost": answer["cost"] + second["cost"]}
+                    answers[s] = {**second, "cost": answer["cost"] + second["cost"],
+                                  "staves": [{**x, "label": y["label"]} for x, y in zip(second["staves"], answer["staves"])]}
         if again:
             root, systems, renumbered, owner = build(answers)
         parts = root.findall("part")

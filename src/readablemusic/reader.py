@@ -96,10 +96,13 @@ voice 1 has the stems up and voice 2 the stems down, with "s" where a voice prin
 Every voice of a measure must add up to the same length (the time signature; the first
 measure may be a shorter pickup)."""
 
-SYLLABLES = """Put each syllable on the voice whose notes it is printed under, on voice 1 when both
+CURSIVE = ("Hebrew written by hand is often in cursive script, whose letters look unlike printed ones "
+           '(a cursive alef is drawn much like "lc"): read it as such.')
+
+SYLLABLES = f"""Put each syllable on the voice whose notes it is printed under, on voice 1 when both
 voices sing it. Copy a syllable in Hebrew letters as written, without adding vowel points,
 its letters in the order they are read; it ends with "-" when its word goes on, whichever
-side of it the hyphen is drawn."""
+side of it the hyphen is drawn. {CURSIVE}"""
 
 ALSO = """Also list:
 - every chord symbol printed above the staves ("G", "D7", "Bbm7/Ab"), as printed;
@@ -517,6 +520,13 @@ def direction(text: str, above: bool) -> ET.Element:
         ET.SubElement(kind, SIGNS[text])
     else:
         ET.SubElement(kind, "words").text = text
+    return d
+
+
+def wedge(kind: str) -> ET.Element:
+    """A direction starting a hairpin ("crescendo", "diminuendo") or ending one ("stop")."""
+    d = ET.Element("direction", placement="below")
+    ET.SubElement(ET.SubElement(d, "direction-type"), "wedge", type=kind, number="1")
     return d
 
 
@@ -984,6 +994,31 @@ def apply(parts: list[ET.Element], systems: list[list[int]], answers: list[dict 
         found += [(s, *place(numbers[t["measure"]], t["quarters"]), t["staff"], t["above"], t["text"].strip())
                   for t in answer["texts"] if t["measure"] in numbers and 1 <= t["staff"] <= len(parts) and t["text"].strip()]
     texts: dict[tuple[int, int], list] = {}  # (part, measure) -> (quarters, direction)
+
+    def onset(k: int, q: float, staff: int, last: tuple[int, float]) -> tuple[int, float, float]:
+        """(measure, onset, end) of the note of voice 1 that a hairpin from q to last goes on:
+        the one sounding at q, or the next measure's first where that is the measure's last
+        note and the hairpin reaches the barline. music21 hangs a hairpin's start on the note
+        after it and its stop on the note before."""
+        d, t, notes = divisions[staff - 1][k], 0, []
+        for ev in read[k][1][staff][0]:
+            notes.append((k, t / d, (t + ev["duration"]) / d))
+            t += ev["duration"]
+        now = max((n for n in notes if n[1] <= q), key=lambda n: n[1], default=notes[0])
+        if now is notes[-1] and last >= (k, t / d) and k + 1 in read and (first := read[k + 1][1][staff][0]):
+            return k + 1, 0.0, first[0]["duration"] / divisions[staff - 1][k + 1]
+        return now
+
+    for numbers, answer in zip(numbered, answers):
+        for w in (answer or {}).get("wedges", []):  # asked for where Claude reads a system itself
+            if w["measure"] in numbers and w["last"] in numbers and 1 <= w["staff"] <= len(parts):
+                (k, q), (end, stop) = place(numbers[w["measure"]], w["quarters"]), place(numbers[w["last"]], w["end"])
+                if k in read:
+                    k, q, after = onset(k, q, w["staff"], (end, stop))
+                    end, stop = max((end, stop), (k, after))
+                if (end, stop) > (k, q):
+                    texts.setdefault((w["staff"] - 1, k), []).append((q, wedge(w["kind"])))
+                    texts.setdefault((w["staff"] - 1, end), []).append((stop, wedge("stop")))
     for s, k, q, staff, above, text in found:
         # Words between two systems, which both images show, are the lower system's.
         if not above and staff == len(parts) and any(s2 == s + 1 and a2 and st2 == 1 and t2.casefold() == text.casefold()
@@ -1006,7 +1041,7 @@ def apply(parts: list[ET.Element], systems: list[list[int]], answers: list[dict 
             ours = shared(voices[p + 1][0]) if duets[p] and len(voices[p + 1]) == 1 else voices[p + 1]
             length = sum(ev["duration"] for ev in ours[0])
             here = [(min(max(round(q * divisions[p][k]), 0), length), el) for q, el in texts.get((p, k), [])]
-            words += len(here)
+            words += sum(el.find("direction-type/wedge") is None for _, el in here)
             # A tie over the barline ends on its pitch, in whichever voice Claude put it.
             held = set().union(*ties_out(part.findall("measure")[k - 1]).values()) if k else set()
             sung += replace(m, ours, {v: held for v in range(1, len(ours) + 1)}, fifths[p][k], here, open_words[p])

@@ -25,7 +25,7 @@ from pathlib import Path
 from PIL import Image
 
 from .pagetext import Item
-from .reader import systems_of
+from .reader import CURSIVE, systems_of
 from .reread import CLEFS, TIME, reread
 
 MODEL = "claude-opus-5-5"
@@ -33,12 +33,14 @@ MAX_EDGE, MAX_AREA = 2576, 3_700_000  # the largest image the model sees in full
 MAX_IMAGE_BYTES = 3_500_000  # the API takes 5 MB an image after base64
 HEADER_ROOM = 14  # interlines after the staff start that hold a clef, 7 accidentals and a time
 MARGIN = 5  # interlines above and below the first system's staves
+HEADER_MIN = 0.03  # share of the page above the first system that is enlarged for the credits
 CREDIT_KINDS = ("title", "subtitle", "composer", "lyricist", "arranger")
 LEGIBILITY = ("clear", "partly", "poor")
 
-PROMPT = """This is the first page of an a cappella choir score.
+PROMPT = f"""This is the first page of an a cappella choir score.
 Look at the first system of music on the page (the first group of staves sung together).
 The second image enlarges the start of that system; read the clefs, key and time there.
+Two more images, where there are, enlarge the left and the right of the top of the page.
 Report what is printed there, not what convention would suggest:
 - For each staff of that system, top to bottom: the part label printed at its left ("" if none),
   and its clef. "treble-8" is a treble clef with a small 8 below it; a treble clef without
@@ -47,7 +49,7 @@ Report what is printed there, not what convention would suggest:
 - The time signature at the start as "beats/beat-type" (common time C is "4/4", cut time is
   "2/2"), or "" if none is printed.
 - The credits printed on the page: title, subtitle, composer (music), lyricist (words),
-  arranger, as written on the page and without their labels ("" if absent).
+  arranger, as written on the page and without their labels ("" if absent). {CURSIVE}
 - Any other text printed on the page outside the music, such as footnotes, sources and
   copyright lines, each paragraph as written. Leave out page numbers, part names and the
   text within the music (lyrics, chord symbols, tempo and other directions).
@@ -145,10 +147,13 @@ def ask(page: Image.Image, omr: Path, log=print) -> Reading | None:
         page = page.convert("L")
         k = page.width / width
         crop = page.crop(tuple(round(v * k) for v in box))
+        images = [_image_block(_fit(page)), _image_block(_fit(crop))]
+        if (top := round(box[1] * k)) > HEADER_MIN * page.height:  # titles and credits, often small
+            images += [_image_block(_fit(page.crop((round(a * page.width), 0, round(b * page.width), top))))
+                       for a, b in ((0, 0.6), (0.4, 1))]
         response = anthropic.Anthropic(timeout=180.0).messages.create(
             model=MODEL, max_tokens=16000,
-            messages=[{"role": "user", "content": [_image_block(_fit(page)), _image_block(_fit(crop)),
-                                                   {"type": "text", "text": PROMPT}]}],
+            messages=[{"role": "user", "content": [*images, {"type": "text", "text": PROMPT}]}],
             output_config={"format": {"type": "json_schema", "schema": SCHEMA}})
         if response.stop_reason != "end_turn":
             log(f"Claude did not read the page ({response.stop_reason})")

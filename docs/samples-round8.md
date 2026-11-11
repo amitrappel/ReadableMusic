@@ -68,3 +68,22 @@ reading it anyway at $0.32 (8 cents a system; $0.35 when it ran).
 Evening out the light (dividing by the paper's brightness) left the notes as they were
 and made Audiveris fail on the page, so there is no such step; pages are only scaled to an
 interline of 24 pixels, as before.
+
+## A sharper photo, and the user's corrections
+
+A second photo, 3000 × 4000 pixels, with 29 pixels between staff lines: the check stopped it
+again (Audiveris lost a system of the handwriting), Claude reading the page "partly".
+
+| Report | Cause | Change |
+|---|---|---|
+| parts are S1 S2 A1 A2 T B; from bar 5 the lower staff went to the tenor | the edge cut the labels ("p1", "o2", "nor", "ss"); read one system at a time, Claude named them "" or now Alto 2, now Soprano 2 | Claude names the staves of all systems at once, from their left ends side by side (3 cents) |
+| the tenor's clef is treble-8 | the bass staff, given to the tenor, gave it its clef | as above |
+| no crescendo in bar 1, no diminuendo in bar 4 | Claude was not asked for hairpins; a start in the middle of a note, which music21 hangs on the next note, reversed one | hairpins are asked for, and start on the note sounding, or on the next measure's first where they start on a measure's last note and reach the barline |
+| "דו" for "או" in bars 1–4; credits misread | the hand writes Hebrew in cursive | the prompts say so; the first-page check sees the top of the page enlarged, in two halves |
+| many notes wrong from bar 5 | Claude's reading of the handwriting | none found (below) |
+
+On 40 notes of bars 5–8 and 10–12 checked against the photo line by line, five readings of
+systems 2 and 3 got 24 to 34 right, mostly a step or a third off, in other places each time.
+Higher effort read worse (24) at more cost; the system cut in two enlarged halves (32) got
+bars 5–8 right but not 10–11. The title now reads right; the composer's name, in small
+cursive, is still missed or misread.
