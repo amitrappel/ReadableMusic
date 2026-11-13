@@ -13,17 +13,26 @@
   <span id="status">Loading…</span>
   <span class="spacer"></span>
   <span id="tools" hidden>
-    <button id="details-view" type="button">Edit title and parts</button>
-    <button id="signs-view" type="button">Clef, key and time</button>
-    <button id="text-view" type="button">Edit a line as text</button>
-    <label id="staves-box" hidden>Staves <select id="staves"></select></label>
+    <button id="menu-button" type="button" aria-expanded="false" aria-controls="menu">Menu</button>
+    <span id="menu">
+      <button id="details-view" type="button">Edit title and parts</button>
+      <button id="signs-view" type="button">Clef, key and time</button>
+      <button id="text-view" type="button">Edit a line as text</button>
+      <label id="staves-box" hidden>Staves <select id="staves"></select></label>
+      <a id="get-xml" class="button" download>MusicXML</a>
+      <a id="get-pdf" class="button" download>PDF</a>
+    </span>
     <button id="save" type="button" disabled>Save changes</button>
-    <a id="get-xml" class="button" download>MusicXML</a>
-    <a id="get-pdf" class="button" download>PDF</a>
   </span>
 </header>
 
-<p id="help" class="narrow" hidden>Click a note or syllable to edit its lyric, then press
+<section id="progress" class="narrow" hidden>
+  <ol id="steps" class="steps"></ol>
+  <p id="why"></p>
+  <p id="elapsed" class="small"></p>
+</section>
+
+<p id="help" class="narrow" hidden>Tap or click a note or syllable to edit its lyric, then press
   <b>Done</b> (or <kbd>Enter</kbd>, or click anywhere else). <kbd>Tab</kbd> moves to the next
   note, <b>Cancel</b> or <kbd>Esc</kbd> undoes the open box.
   End a syllable with <kbd>-</kbd> when the word continues on the next note.</p>
@@ -35,6 +44,14 @@
   <p><a class="button primary" href="/">Upload a better image</a>
     <button id="anyway" type="button">Read it anyway</button></p>
   <p id="poor-cost" class="small"></p>
+</section>
+
+<section id="failed" class="narrow" hidden>
+  <h2 id="failed-title">The conversion failed</h2>
+  <p id="failed-error"></p>
+  <p><button id="again" type="button" class="button primary">Try again</button>
+    <a class="button" href="/">Upload other pages</a></p>
+  <p id="failed-note" class="small"></p>
 </section>
 
 <div id="score"></div>

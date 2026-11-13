@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import re
 import threading
@@ -12,6 +13,7 @@ from PIL import Image
 
 from readablemusic import audiveris, web
 from readablemusic.pipeline import PoorImage
+from readablemusic.progress import Step
 
 
 def png() -> bytes:
@@ -90,6 +92,41 @@ def test_failure_message_hides_server_paths(client, monkeypatch):
     job = upload(client).headers["location"].rsplit("/", 1)[1]
     status = client.get(f"/api/jobs/{job}").json()
     assert status["state"] == "failed" and "/data" not in status["error"]
+
+
+def test_a_failed_job_is_tried_again_as_it_was_asked(client, monkeypatch, tmp_path):
+    asked = []
+
+    def fail_once(inputs, out_dir, log=print, check=False):
+        asked.append(check)
+        if len(asked) == 1:
+            raise ValueError("oops")
+        return fake_transcribe(inputs, out_dir)
+    monkeypatch.setattr(web, "transcribe", fail_once)
+    job = upload(client).headers["location"].rsplit("/", 1)[1]
+    assert client.get(f"/api/jobs/{job}").json() == {"state": "failed", "error": "Recognition failed (ValueError).",
+                                                     "check": True}
+    assert client.post(f"/api/jobs/{job}/again", content=b"{}").json() == {"queued": True}
+    assert client.get(f"/api/jobs/{job}").json() == {"state": "done"} and asked == [True, True]
+    assert client.post(f"/api/jobs/{job}/again", content=b"{}").status_code == 409
+
+
+def test_a_missing_job_is_a_page_in_the_browser(client):
+    response = client.get("/jobs/" + "0" * 32)
+    assert response.status_code == 404 and "Upload pages" in response.text and "No such job" in response.text
+
+
+def test_the_page_is_told_each_step_and_why(client, monkeypatch):
+    seen = []
+
+    def steps(inputs, out_dir, log=print, check=False):
+        log("A message for the command line")
+        log(Step("Recognising the music of 1 page", "Audiveris finds the notes."))
+        seen.append(json.loads((out_dir / "status.json").read_text(encoding="utf-8")))
+        return fake_transcribe(inputs, out_dir)
+    monkeypatch.setattr(web, "transcribe", steps)
+    upload(client)
+    assert seen == [{"state": "running", "step": "Recognising the music of 1 page", "why": "Audiveris finds the notes."}]
 
 
 def test_inputs_are_deleted_after_a_successful_job(client, tmp_path):
@@ -180,7 +217,7 @@ def test_slot_is_released_after_a_failed_job(client, monkeypatch):
 
 def test_form_errors_are_escaped_pages_and_api_errors_are_json(client):
     response = upload(client, "<script>.exe")
-    assert response.status_code == 400 and "<script>" not in response.text and "Back" in response.text
+    assert response.status_code == 400 and "<script>" not in response.text and "Upload pages" in response.text
     assert client.get("/api/jobs/" + "0" * 32).json()["detail"].startswith("No such job")
 
 

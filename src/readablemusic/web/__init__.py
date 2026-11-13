@@ -19,7 +19,7 @@ import time
 import traceback
 import uuid
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import BrokenExecutor, ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from xml.etree.ElementTree import ParseError
 
@@ -28,9 +28,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from ..audiveris import AudiverisError
 from ..engrave import line_breaks, to_pdf
 from ..pages import page_count
 from ..pipeline import PoorImage, transcribe
+from ..progress import Step
 from ..reread import CLEFS, reread
 from ..staves import restaff
 
@@ -57,10 +59,12 @@ engraving = asyncio.Semaphore(1)  # a large score takes much memory and CPU
 
 
 def error_response(request: Request, status: int, detail: str):
-    if request.method == "POST" and not request.url.path.startswith("/api/"):
-        # the upload is a plain form post, so the browser shows this as a page
-        page = f'<link rel="stylesheet" href="/static/style.css"><main class="narrow"><h1>ReadableMusic</h1>' \
-               f'<p>{html.escape(detail)}</p><p><a href="/">Back</a></p></main>'
+    if not request.url.path.startswith(("/api/", "/static/")):
+        # the upload is a plain form post and a job's address is opened in the browser, so
+        # the browser shows this as a page
+        page = '<meta name="viewport" content="width=device-width, initial-scale=1">' \
+               '<link rel="stylesheet" href="/static/style.css"><main class="narrow"><h1>ReadableMusic</h1>' \
+               f'<p>{html.escape(detail)}</p><p><a class="button primary" href="/">Upload pages</a></p></main>'
         return HTMLResponse(page, status)
     return JSONResponse({"detail": detail}, status)
 
@@ -84,7 +88,7 @@ async def limit_body(request: Request, call_next):
 
 def job_dir(job: str) -> Path:
     if not JOB_ID.fullmatch(job) or not (DATA / job).is_dir():
-        raise HTTPException(404, "No such job (results are kept for 24 hours)")
+        raise HTTPException(404, "No such job: results are kept for 24 hours, and lost when the site is updated.")
     return DATA / job
 
 
@@ -104,10 +108,15 @@ def isolated(fn, *args):
 def convert(folder: Path, inputs: list[Path], check: bool, claude: bool) -> None:
     if not claude:
         os.environ.pop("ANTHROPIC_API_KEY", None)  # in the job's own process
-    results = transcribe(inputs, folder, log=lambda msg: None, check=check)
+
+    def log(message) -> None:  # the steps, for the job's page
+        if isinstance(message, Step):
+            set_status(folder, "running", step=message.what, why=message.why)
+    results = transcribe(inputs, folder, log=log, check=check)
     if not results:
         raise RuntimeError("No music was recognised on these pages.")
     shutil.copy(results[0], folder / "score.musicxml")
+    log(Step("Printing the PDF", "Verovio engraves the finished score, ready to print or to correct here."))
     to_pdf(folder / "score.musicxml", folder / "score.pdf")
 
 
@@ -126,9 +135,14 @@ def run_job(folder: Path, inputs: list[Path], check: bool = True) -> None:
     except Exception as e:
         traceback.print_exc()
         (folder / "error.log").write_text(traceback.format_exc(), encoding="utf-8")
-        # Other exceptions' messages can hold server paths.
-        error = str(e) if type(e) is RuntimeError else "Recognition failed. A sharper scan or fewer pages may help."
-        set_status(folder, "failed", error=error)
+        # Other exceptions' messages can hold server paths; their names say where it failed.
+        if isinstance(e, AudiverisError):
+            error = "Audiveris, which recognises the music, could not read these pages."
+        elif isinstance(e, BrokenExecutor):
+            error = "The server ran out of memory. Fewer pages at a time may help."
+        else:
+            error = str(e) if type(e) is RuntimeError else f"Recognition failed ({type(e).__name__})."
+        set_status(folder, "failed", error=error, check=check)
     finally:
         slots.release()
 
@@ -226,17 +240,37 @@ def job_status(job: str):
     return json.loads((job_dir(job) / "status.json").read_text(encoding="utf-8"))
 
 
-@app.post("/api/jobs/{job}/anyway")
-def read_anyway(job: str):
-    """Convert the pages of a job stopped as too poor to read well, as they are."""
-    folder = job_dir(job)
+def requeue(folder: Path, state: str) -> dict:
+    """Queue again the job in folder, which waits in state; its status before."""
     with answering:
-        if json.loads((folder / "status.json").read_text(encoding="utf-8"))["state"] != "poor":
+        status = json.loads((folder / "status.json").read_text(encoding="utf-8"))
+        if status["state"] != state or not (folder / "input").is_dir():
             raise HTTPException(409, "This conversion is not waiting for an answer")
         if not slots.acquire(blocking=False):
             raise HTTPException(503, "The server is busy; please try again in a few minutes.")
         set_status(folder, "queued")
+    return status
+
+
+@app.post("/api/jobs/{job}/anyway")
+def read_anyway(job: str):
+    """Convert the pages of a job stopped as too poor to read well, as they are."""
+    folder = job_dir(job)
+    requeue(folder, "poor")
     worker.submit(run_job, folder, sorted((folder / "input").iterdir()), False)
+    return {"queued": True}
+
+
+@app.post("/api/jobs/{job}/again")
+def try_again(job: str, request: Request):
+    """Convert the pages of a failed job once more, as it was asked to; it counts as a conversion."""
+    folder = job_dir(job)
+    address = client_address(request)
+    if too_many_jobs(address):
+        raise HTTPException(429, f"At most {JOBS_PER_HOUR} conversions an hour; please try again later.")
+    status = requeue(folder, "failed")
+    recent_jobs[address].append(time.time())
+    worker.submit(run_job, folder, sorted((folder / "input").iterdir()), status.get("check", True))
     return {"queued": True}
 
 

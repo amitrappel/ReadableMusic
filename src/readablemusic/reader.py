@@ -45,6 +45,7 @@ import music21 as m21
 from PIL import Image
 
 from .chords import Chord
+from .progress import Step
 from .reread import key_alters
 
 MODEL = "claude-opus-5-5"
@@ -1086,11 +1087,15 @@ def read_again(mxl: Path, omr: Path, load_sheets: Callable[[], list[Image.Image]
         client = anthropic.Anthropic(timeout=600.0)
         answers, again = [], 0
         first_part = parts[0].findall("measure")
-        for measures, (sheet, width, box, slope) in zip(systems, places):
+        for k, (measures, (sheet, width, box, slope)) in enumerate(zip(systems, places), 1):
+            log(Step(f"Claude is checking system {k} of {len(systems)}", "Claude compares recognition's reading "
+                     "with the image, to correct the notes, lyrics and chord symbols it misread."))
             page = sheets[sheet]
             image, written = level(page.crop(tuple(round(v * page.width / width) for v in box)), slope), draft(parts, measures)
             answer = _ask(client, image, written, log)
-            if answer and (wrong := doubts(answer, parts, {first_part[k].get("number"): k for k in measures})):
+            if answer and (wrong := doubts(answer, parts, {first_part[m].get("number"): m for m in measures})):
+                log(Step(f"Claude is checking system {k} again", "Some of its measures do not add up to the time "
+                         "signature, so Claude reads it once more."))
                 second = _ask(client, image, written, log, answer, wrong)
                 again += 1
                 if second:

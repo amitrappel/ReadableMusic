@@ -18,6 +18,7 @@ from .fresh import poor, read_fresh
 from .lyrics import clean_lyrics, drop_stray_lines
 from .ocr import read_scan_text, repair_hebrew_credits
 from .pages import load_pages, save_tiff, uploaded_interline
+from .progress import Step
 from .pagetext import (CREDITS, Bounds, Item, add_directions, drop_repeated_text, measure_places, read_page_text,
                        stacked_names, write_page_text)
 from .parts import merge_parts, standardize_names
@@ -123,6 +124,8 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print, check: bool = False
         if not scanned else [1.0] * len(pages)
     if scanned:
         # OCR just above a staff can read high notes as letters; whitening them would lose music.
+        log(Step("Finding the words on the page", "Titles, credits and lyrics are set apart before the music is "
+                 "recognised, so that they are not taken for notes."))
         items = [i for i in read_scan_text(pages, [music_band(page, interline) for page in pages])
                  if i.kind != "direction"]
     elif (repaired := repair_hebrew_credits(items, pages, points)):
@@ -136,6 +139,9 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print, check: bool = False
     pages = [whiten(blank_outside_music(page, interline, keep=boxes(n, True)), boxes(n, False))
              for n, page in enumerate(pages)]
     kept = list(range(len(pages)))  # page of each of Audiveris's sheets
+    log(Step(f"Recognising the music of {len(pages)} page{'s' if len(pages) > 1 else ''}",
+             "Audiveris finds the staves, notes, rests and lyrics: the reading that the next steps check and "
+             "correct. It takes about a minute a page."))
     try:
         mxls = audiveris.transcribe(save_tiff(pages, work / f"{inputs[0].stem}.tif"), work)
     except audiveris.AudiverisError:
@@ -146,6 +152,8 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print, check: bool = False
         if len(music) == len(pages):
             raise
         log(f"Audiveris failed; retrying without {len(pages) - len(music)} page(s) that look staff-less")
+        log(Step("Recognising the music again", "Audiveris failed on the whole book, as it does where a page has no "
+                 "staves, so the pages that look as if they hold none are left out."))
         mxls = audiveris.transcribe(save_tiff(music, work / f"{inputs[0].stem}.tif"), work)
         pages = music
         if support[0] < MIN_STAFF_SHARE * max(support):
@@ -157,6 +165,8 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print, check: bool = False
         fixed = fix_text(omr, source)
         accidentals, ties = fix_symbols(omr, source)
         if fixed or accidentals or ties:
+            log(Step("Taking the words and accidentals from the PDF", "This PDF holds its words and symbols as such, "
+                     "which are surer than recognition's reading of them."))
             try:
                 mxls = audiveris.export(omr, work)
                 log(f"Corrected {fixed} lyric syllable(s) or word(s) from the PDF text")
@@ -194,6 +204,8 @@ def transcribe(inputs: list[Path], out_dir: Path, log=print, check: bool = False
         replaced = (CREDITS if reading.credits else ()) + (("note", "rights") if reading.notes else ())
         items = [i for i in items if i.kind not in replaced] + reading.items(0)
     stacked = stacked_names(source) if text_pdf else {}
+    log(Step("Putting the score together", "The staves of each system are joined into one part for each voice, "
+             "and the lyrics and the words above the staves are tidied."))
     results = []
     for n, mxl in enumerate(mxls):
         raw = m21.converter.parse(mxl)

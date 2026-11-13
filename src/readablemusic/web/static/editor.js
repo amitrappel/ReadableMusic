@@ -581,6 +581,15 @@ async function loadEditor() {
     if (!$("popup").contains(e.target) && !$("score").contains(e.target)) closePopup(true);
   });
   $("save").addEventListener("click", save);
+  // On a narrow screen the tools are in a menu, which a choice or a click elsewhere closes.
+  const menu = open => {
+    $("menu").classList.toggle("open", open);
+    $("menu-button").setAttribute("aria-expanded", open);
+  };
+  $("menu-button").addEventListener("click", () => menu(!$("menu").classList.contains("open")));
+  $("menu").addEventListener("click", e => { if (e.target.closest("button, a")) menu(false); });
+  $("staves").addEventListener("change", () => menu(false));
+  document.addEventListener("click", e => { if (!e.target.closest("#menu, #menu-button")) menu(false); });
   $("text-view").addEventListener("click", openPanel);
   $("panel-part").addEventListener("change", fillPanelText);
   $("panel-verse").addEventListener("change", fillPanelText);
@@ -604,25 +613,40 @@ async function loadEditor() {
 
 async function poll() {
   const started = Date.now();
+  const seen = [];  // the steps shown so far
   for (;;) {
     const response = await fetch(`/api/jobs/${job}`);
     if (!response.ok) {
-      $("status").textContent = (await response.json()).detail || "Unknown job";
-      return;
+      return showFailure("This conversion is gone",
+                         (await response.json().catch(() => ({}))).detail || "Unknown job", false);
     }
     const status = await response.json();
     const seconds = Math.round((Date.now() - started) / 1000);
+    $("progress").hidden = !["queued", "running"].includes(status.state);
     if (status.state === "done") return loadEditor();
-    if (status.state === "failed") {
-      $("status").textContent = `Conversion failed: ${status.error}`;
-      return;
-    }
+    if (status.state === "failed") return showFailure("The conversion failed", status.error, true);
     if (status.state === "poor") return askAnyway(status);
-    $("status").textContent = status.state === "queued"
-      ? "Waiting for another conversion to finish…"
-      : `Reading the music, about a minute per page… (${seconds}s)`;
+    showStep(status, seen, seconds);
     await new Promise(r => setTimeout(r, 3000));
   }
+}
+
+// The step the conversion is at, why it runs now, and the steps before it.
+function showStep(status, seen, seconds) {
+  const [what, why] = status.state === "queued"
+    ? ["Waiting for another conversion to finish", "The server converts one score at a time."]
+    : [status.step || "Loading the pages", status.why || "The pages are read in and scaled for recognition."];
+  if (seen[seen.length - 1] !== what) seen.push(what);
+  $("status").textContent = "Converting…";
+  $("steps").replaceChildren(...seen.map((step, k) => {
+    const li = document.createElement("li");
+    li.textContent = step;
+    if (k === seen.length - 1) li.className = "current";
+    return li;
+  }));
+  $("why").textContent = why;
+  $("elapsed").textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} so far`;
+  $("progress").hidden = false;
 }
 
 function askAnyway(status) {
@@ -638,6 +662,28 @@ function askAnyway(status) {
     : `Reading it anyway has Claude read the music, at a cost of about $${status.cost.toFixed(2)}.`;
   $("poor").hidden = false;
 }
+
+function showFailure(title, error, again) {
+  $("progress").hidden = true;
+  $("status").textContent = title;
+  $("failed-title").textContent = title;
+  $("failed-error").textContent = error;
+  $("again").hidden = !again;
+  $("failed").hidden = false;
+}
+
+$("again").addEventListener("click", async () => {
+  $("again").disabled = true;
+  const response = await fetch(`/api/jobs/${job}/again`, {method: "POST", body: "{}"});
+  $("again").disabled = false;
+  if (!response.ok) {
+    $("failed-note").textContent = (await response.json().catch(() => ({}))).detail || `Failed (${response.status})`;
+    return;
+  }
+  $("failed-note").textContent = "";
+  $("failed").hidden = true;
+  poll();
+});
 
 $("anyway").addEventListener("click", async () => {
   $("anyway").disabled = true;

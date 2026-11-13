@@ -25,6 +25,7 @@ from typing import Callable
 from PIL import Image
 
 from .chords import Chord
+from .progress import Step
 from .reader import SCHEMA as DRAFTED
 from .reader import (ABOVE, ALSO, DIVISIONS, FORMAT, MODEL, STEMS, SYLLABLES, _ask, _image, _spaces, apply, doubts, level,
                      page_systems, parse_voice, systems_of)
@@ -265,7 +266,9 @@ def read_fresh(mxl: Path, omr: Path, load_sheets: Callable[[], list[Image.Image]
         places = bands(page_systems(omr), [page.height for page in sheets])
         client = anthropic.Anthropic(timeout=600.0)
         images, prompts, answers, first, cost = [], [], [], 1, 0.0
-        for sheet, width, box, slope in places:
+        for k, (sheet, width, box, slope) in enumerate(places, 1):
+            log(Step(f"Claude is reading system {k} of {len(places)}", "Recognition could read little of this "
+                     "image, so Claude reads the music itself, a system at a time."))
             page = sheets[sheet]
             image = level(page.crop(tuple(round(v * page.width / width) for v in box)), slope)
             prompt = PROMPT.replace("{first}", str(first))
@@ -281,6 +284,8 @@ def read_fresh(mxl: Path, omr: Path, load_sheets: Callable[[], list[Image.Image]
         if not answers:
             return set(), []
         if len(answers) == len(places):
+            log(Step("Claude is naming the parts", "The names at the left of all the systems are read side by "
+                     "side, so that each staff goes to the same voice throughout."))
             cost += name_staves(client, labels(sheets, page_systems(omr)), answers, log)
         root, systems, renumbered, owner = build(answers)
         # Where a voice does not add up, Claude looks again, keeping its measures and staves.
@@ -289,6 +294,8 @@ def read_fresh(mxl: Path, omr: Path, load_sheets: Callable[[], list[Image.Image]
             own = [part for part, (system, _) in zip(root.findall("part"), owner) if system == s]
             numbers = {m["number"]: k for m, k in zip(answer["measures"], systems[s])}
             if (wrong := doubts(answer, own, numbers)):
+                log(Step(f"Claude is reading system {s + 1} again", "Some of its measures do not add up to the time "
+                         "signature, so Claude reads it once more."))
                 again += 1
                 second = _ask(client, image, "", log, answer, wrong, prompt, SCHEMA)
                 if second and len(second["measures"]) == len(answer["measures"]) and len(second["staves"]) == len(answer["staves"]):

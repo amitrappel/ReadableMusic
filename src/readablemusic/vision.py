@@ -25,6 +25,7 @@ from pathlib import Path
 from PIL import Image
 
 from .pagetext import Item
+from .progress import Step
 from .reader import CURSIVE, systems_of
 from .reread import CLEFS, TIME, reread
 
@@ -136,6 +137,8 @@ def ask(page: Image.Image, omr: Path, log=print) -> Reading | None:
     """Claude's reading of page, which Audiveris recognised as the first sheet of omr."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return None
+    log(Step("Claude is checking the first page", "Recognition often misreads the clefs, key and time signature, "
+             "and the title and credits, which the first page shows."))
     try:
         import anthropic
 
