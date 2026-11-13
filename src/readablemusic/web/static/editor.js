@@ -633,7 +633,8 @@ function askAnyway(status) {
     return li;
   }));
   $("poor-cost").textContent = status.cost === null
-    ? "Reading it anyway gives what recognition finds."
+    ? "Claude, which reads handwriting and hard photos, reads here only with an access code. "
+      + "Reading it anyway gives what recognition alone finds."
     : `Reading it anyway has Claude read the music, at a cost of about $${status.cost.toFixed(2)}.`;
   $("poor").hidden = false;
 }

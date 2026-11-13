@@ -45,8 +45,9 @@ def client(tmp_path, monkeypatch):
     return TestClient(web.app)
 
 
-def upload(client, name="scan.png", data=None):
-    response = client.post("/jobs", files=[("files", (name, data or png(), "image/png"))], follow_redirects=False)
+def upload(client, name="scan.png", data=None, code=""):
+    response = client.post("/jobs", files=[("files", (name, data or png(), "image/png"))], data={"code": code},
+                           follow_redirects=False)
     return response
 
 
@@ -108,6 +109,21 @@ def test_a_poor_scan_stops_and_is_read_anyway_when_asked(client, monkeypatch, tm
     assert client.post(f"/api/jobs/{job}/anyway", content=b"{}").json() == {"queued": True}
     assert client.get(f"/api/jobs/{job}").json() == {"state": "done"}
     assert client.post(f"/api/jobs/{job}/anyway", content=b"{}").status_code == 409
+
+
+def test_claude_reads_only_with_the_code_where_one_is_set(client, monkeypatch, tmp_path):
+    seen = []
+
+    def record(inputs, out_dir, log=print, check=False):
+        seen.append(os.environ.get("ANTHROPIC_API_KEY"))
+        return fake_transcribe(inputs, out_dir)
+    monkeypatch.setattr(web, "transcribe", record)
+    monkeypatch.setattr(web, "CODE", "tenor")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    assert upload(client, code="bass").status_code == 403 and list(tmp_path.iterdir()) == []
+    upload(client, code="tenor")
+    upload(client)
+    assert seen == ["key", None]
 
 
 def test_rejects_unreadable_files_and_too_many_pages(client, monkeypatch):

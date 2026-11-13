@@ -19,6 +19,12 @@ what runs.
    - Resource limits: memory 4 GB.
 4. In the workspace's usage settings, set a hard limit of $10 (the lowest allowed). When
    usage reaches it, Railway takes the site offline instead of charging more.
+5. For Claude's reading (handwriting, poor photos, lyrics and chords on scans), add
+   `ANTHROPIC_API_KEY` and `READABLEMUSIC_CODE`, an access code of your choosing, to the
+   Variables. Claude then reads only the jobs of those who type the code on the upload page;
+   other jobs run as without a key. Make the key a separate one, in a workspace of its own in
+   the Claude Console with a monthly spend limit, so that it can be capped and revoked alone.
+   Without `READABLEMUSIC_CODE`, every job uses the key.
 
 The image also needs everything the code loads at run time. OCR data is downloaded into
 `/opt/tessdata` (`eng` and `heb`). Without `heb`, the credits reader skips Hebrew instead
@@ -74,6 +80,8 @@ Set in `src/readablemusic/web/__init__.py`:
 - Each job runs in its own process, so running out of memory costs that job only.
 - PDF pages are rendered at 100 megapixels at most, whatever size they declare.
 - Inputs are deleted when a job succeeds, and everything else after 24 hours.
+- Claude reads a job only with the access code (`READABLEMUSIC_CODE`). A wrong code counts
+  as a conversion, so an address can guess 10 times an hour.
 
 There is no CAPTCHA yet. Add one if the limits above turn out not to be enough.
 

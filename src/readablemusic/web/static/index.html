@@ -24,10 +24,13 @@
       <span class="small">One photo for each page, in order.</span>
     </p>
     <ol id="pages" class="pages" hidden></ol>
+    <label class="code">Access code, if you have one
+      <input type="password" name="code" id="code" autocomplete="off">
+      <span class="small">With it Claude reads the music too, handwriting and hard photos included.</span></label>
     <button type="submit">Convert</button>
   </form>
   <ul class="hints">
-    <li>Printed music only. Lyrics in English for now.</li>
+    <li>Printed music only, or handwritten with an access code. Lyrics in English for now.</li>
     <li>Scan straight, at 300 DPI if you can. To photograph a page, lay it flat, hold the phone
       straight above it so that the whole page fills the picture, and avoid shadows.</li>
     <li>Processing takes about a minute per page, 30 pages at most. Results are deleted after 24 hours.</li>
@@ -82,7 +85,9 @@
       $("photo").value = "";
     });
   } catch (e) {}  // DataTransfer cannot be made here
+  try { $("code").value = localStorage.getItem("code") || ""; } catch (e) {}
   $("upload").addEventListener("submit", e => {
+    try { localStorage.setItem("code", $("code").value); } catch (e) {}
     const button = e.target.querySelector("button[type=submit]");
     button.disabled = true;
     button.textContent = "Uploading…";

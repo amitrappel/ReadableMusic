@@ -1,10 +1,13 @@
 """Web app: upload a scan, wait, correct the lyrics in the browser, download. Where the scan
 looks too poor to read well, the job stops first and asks for a better one, or to go on.
+Where READABLEMUSIC_CODE is set, Claude reads only the jobs of those who give that code, as
+the key's owner pays for its reading.
 
 Run with `uv run readablemusic-web` and open http://127.0.0.1:8000.
 """
 
 import asyncio
+import hmac
 import html
 import json
 import multiprocessing
@@ -20,7 +23,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from xml.etree.ElementTree import ParseError
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -41,6 +44,8 @@ MAX_WAITING = 5  # jobs queued or running; further uploads are turned away
 JOBS_PER_HOUR = 10  # from one address
 SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 JOB_ID = re.compile(r"[0-9a-f]{32}")
+CODE = os.environ.get("READABLEMUSIC_CODE", "")
+CLAUDE = "claude"  # in a job's folder where Claude may read it
 
 app = FastAPI(title="ReadableMusic")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -96,7 +101,9 @@ def isolated(fn, *args):
         return pool.submit(fn, *args).result()
 
 
-def convert(folder: Path, inputs: list[Path], check: bool) -> None:
+def convert(folder: Path, inputs: list[Path], check: bool, claude: bool) -> None:
+    if not claude:
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # in the job's own process
     results = transcribe(inputs, folder, log=lambda msg: None, check=check)
     if not results:
         raise RuntimeError("No music was recognised on these pages.")
@@ -108,7 +115,7 @@ def run_job(folder: Path, inputs: list[Path], check: bool = True) -> None:
     set_status(folder, "running")
     start = time.time()
     try:
-        isolated(convert, folder, inputs, check)
+        isolated(convert, folder, inputs, check, (folder / CLAUDE).exists())
         set_status(folder, "done")
         shutil.rmtree(folder / "input", ignore_errors=True)  # the corrections only need the score
         shutil.rmtree(folder / "work", ignore_errors=True)
@@ -181,13 +188,19 @@ def index():
 
 
 @app.post("/jobs")
-async def create_job(files: list[UploadFile], request: Request):
+async def create_job(files: list[UploadFile], request: Request, code: str = Form("")):
     address = client_address(request)
     if too_many_jobs(address):
         raise HTTPException(429, f"At most {JOBS_PER_HOUR} conversions an hour; please try again later.")
+    claude = not CODE or hmac.compare_digest(code.encode(), CODE.encode())
+    if code and not claude:
+        recent_jobs[address].append(time.time())  # a guess counts as a conversion
+        raise HTTPException(403, "Wrong access code")
     job = uuid.uuid4().hex
     folder = DATA / job
     (folder / "input").mkdir(parents=True)
+    if claude:
+        (folder / CLAUDE).touch()
     try:
         inputs = await save_uploads(files, folder / "input")
     except HTTPException:
